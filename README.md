@@ -1,98 +1,249 @@
-# AI-Assisted Real Estate Price Prediction and Decision Support System
+# AI-Assisted Real Estate Price Prediction and Dashboard
 
-This project is a simple real estate decision-support tool built for a DS440 capstone project. The main idea is to take housing data, predict a fair home price using machine learning, and then show that prediction in an interactive dashboard next to the listed price.
+## Project Goal
 
-Instead of only showing raw listing data, the project tries to answer a more useful question:
+The goal of this project is to build a simple AI-assisted system that helps users evaluate real estate listings by comparing a property’s listed price with a machine learning–predicted fair price. By highlighting pricing gaps, the system allows users to better understand whether a property is overpriced, fairly priced, or undervalued. In addition to this comparison, the project provides interactive visualizations and property-specific insights that help users explore market patterns and understand which features influence pricing. Overall, the objective is to improve transparency in real estate decisions and give users a clearer, data-driven perspective when evaluating properties.
 
-**Does this property look overpriced, fairly priced, or undervalued based on its features?**
 
-The dashboard lets users explore homes, click on individual properties, and view property-specific insights such as:
-- listed price
-- predicted price
-- price gap
-- pricing label
-- feature comparison
-- neighborhood price context
-
-A second notebook is also included for **time-on-market prediction**. In this version, time on market is treated as a proxy-based experimental feature using the available dataset.
 
 ---
 
-## What the Project Does
-
-This project combines:
-- **machine learning notebooks** for prediction
-- **data preprocessing** for housing features
-- **an interactive Dash web app** for visualization and decision support
-
-The main system predicts a property’s fair value using housing features like:
-- living area
-- overall quality
-- age
-- bathrooms
-- garage capacity
-- neighborhood-related differences
-
-The app then compares:
-- **Listed Price**
-- **Predicted Price**
-
-Using that comparison, the app labels properties as:
-- **Overpriced**
-- **Fairly priced**
-- **Undervalued**
-
-Users can then click a property in the dashboard and view more detailed insights about why it received that label.
+## Table of Contents
+1. Introduction  
+2. Project Structure  
+3. House Price Prediction  
+4. Time on Market Prediction  
+5. Real Estate Dashboard  
+6. Data Description  
+7. How to Run  
 
 ---
 
-## Main Features
+## Introduction
 
-- sale price prediction notebook
-- time-on-market prediction notebook
-- interactive dashboard built with Dash and Plotly
-- map view of listings
-- clickable listing cards
-- clickable scatter plot
-- selected-property insight panel
-- selected-property charts for:
-  - property vs market
-  - property feature comparison
-  - property price context
+Real estate pricing depends on many factors such as location, size, quality, and market conditions. This project builds a simple AI-assisted system that:
+
+- Predicts house prices using machine learning models  
+- Estimates how long a house may stay on the market  
+- Provides an interactive dashboard for exploring listings and insights  
+
+The main goal is to help users make better pricing decisions by comparing:
+
+```
+Listed Price vs Predicted Price
+```
+
+and labeling properties as:
+- Overpriced  
+- Fairly priced  
+- Undervalued  
 
 ---
 
-## Project Files
-
-- `app.py`  
-  Main Dash application for the dashboard
-
-- `train.csv`  
-  Training dataset
-
-- `test.csv`  
-  Test dataset
+## Project Structure
 
 - `house_price_prediction.ipynb`  
-  Notebook for home price prediction
+  Notebook for predicting house prices  
 
 - `Time on market prediction.ipynb`  
-  Notebook for time-on-market prediction
+  Notebook for estimating time on market  
+
+- `app.py`  
+  Interactive Dash dashboard  
+
+- `train.csv`, `test.csv`  
+  Dataset files  
 
 - `submission.csv`  
-  Predicted sale prices generated from the house price notebook
+  Predicted house prices  
 
 - `time_on_market_submission.csv`  
-  Predicted time-on-market values generated from the second notebook
+  Predicted time on market  
+
+- `data_description.txt`  
+  Dataset feature descriptions  
 
 ---
 
-## Important Before Running
+## House Price Prediction
 
-If you copied this project from another machine or repo, make sure you **replace any old hard-coded file paths**.
+### Overview
+This notebook builds regression models to estimate house prices based on property features.
 
-For example, if you see paths like these in your notebooks or `app.py`:
+### Steps
+1. Data preprocessing  
+   - Handle missing values  
+   - Encode categorical variables  
+   - Scale numerical features  
+
+2. Modeling  
+   - XGBoost  
+   - LightGBM  
+   - CatBoost  
+   - Ensemble averaging  
+
+3. Evaluation  
+   - RMSE  
+   - R² Score  
+
+### Output
+Predictions are saved to:
+
+```
+submission.csv
+```
+
+---
+
+## Time on Market Prediction
+
+### Overview
+This notebook estimates how long a property will stay on the market.
+
+### Important Note
+The dataset does not include a real "time on market" column, so a proxy variable is created:
+
+```
+TimeOnMarket = (YrSold - YearBuilt) * 12 + MoSold
+```
+
+### Steps
+- Feature selection  
+- Data preprocessing  
+- Random Forest model  
+
+### Output
+Saved as:
+
+```
+time_on_market_submission.csv
+```
+
+---
+
+## Real Estate Dashboard
+
+### Overview
+The `app.py` file builds an interactive dashboard using Dash and Plotly.
+
+### Features
+- Interactive property map  
+- Clickable listing cards  
+- Filters (neighborhood, bedrooms, property type)  
+- Property-specific insight panel  
+- Pricing classification (Overpriced / Fair / Undervalued)  
+- Dynamic charts based on selected property  
+
+### Visualizations
+- Map view with pricing labels  
+- Scatter plot (Living Area vs Price)  
+- Feature comparison chart  
+- Price comparison (listed vs predicted vs averages)  
+
+---
+
+## Data Description
+
+The dataset contains housing features such as:
+
+- **GrLivArea** → Living area (sq ft)  
+- **OverallQual** → Overall quality  
+- **YearBuilt** → Construction year  
+- **Neighborhood** → Location  
+- **GarageCars** → Garage size  
+- **SalePrice** → Target variable  
+
+For full details, see:
+
+```
+data_description.txt
+```
+
+---
+
+## How to Run
+
+### 1. Clone the repository
+
+```bash
+git clone <your-repo-link>
+cd <your-repo-folder>
+```
+
+---
+
+### 2. Fix file paths (IMPORTANT)
+
+If your code contains paths like:
 
 ```python
-train_path = "C:/Users/yourname/Downloads/.../train.csv"
-test_path = "C:/Users/yourname/Downloads/.../test.csv"
+C:/Users/yourname/...
+```
+
+Replace them with:
+
+```python
+train.csv
+test.csv
+submission.csv
+time_on_market_submission.csv
+```
+
+---
+
+### 3. Create virtual environment (PowerShell)
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+---
+
+### 4. Install dependencies
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost
+```
+
+---
+
+### 5. Run notebooks
+
+```powershell
+.\.venv\Scripts\python.exe -m notebook
+```
+
+Run:
+- `house_price_prediction.ipynb`
+- `Time on market prediction.ipynb`
+
+---
+
+### 6. Run dashboard
+
+```powershell
+.\.venv\Scripts\python.exe app.py
+```
+
+Open in browser:
+
+```
+http://127.0.0.1:8050
+```
+
+---
+
+## How to Use
+
+- Apply filters on the left panel  
+- Adjust zoom using slider  
+- Click a property from:
+  - map  
+  - scatter plot  
+  - listing cards  
+- View detailed insights and charts  
+
+---
+
+
