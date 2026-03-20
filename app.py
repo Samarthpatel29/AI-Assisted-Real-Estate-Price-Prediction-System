@@ -37,12 +37,14 @@ data["ListedPrice"] = data["SalePrice"]
 data["PriceGap"] = data["ListedPrice"] - data["PredictedPrice"]
 data["GapPct"] = data["PriceGap"] / data["PredictedPrice"]
 
+
 def pricing_label(x):
     if x > 0.08:
         return "Overpriced"
     elif x < -0.08:
         return "Undervalued"
     return "Fairly priced"
+
 
 def label_color(label):
     return {
@@ -51,9 +53,20 @@ def label_color(label):
         "Fairly priced": "#22c55e"
     }.get(label, "#64748b")
 
+
 data["PricingLabel"] = data["GapPct"].apply(pricing_label)
 data["PropertyType"] = data["BldgType"].fillna("House")
 data["Bedrooms"] = data["BedroomAbvGr"].fillna(0).astype(int)
+
+# User-friendly property type labels
+PROPERTY_LABELS = {
+    "ALL": "All Homes",
+    "1Fam": "Single Family",
+    "2fmCon": "Two-Family",
+    "Duplex": "Duplex",
+    "Twnhs": "Townhouse",
+    "TwnhsE": "End-Unit Townhome"
+}
 
 # Neighborhood coordinates
 lat_map = {
@@ -87,11 +100,17 @@ data["Address"] = data.apply(
 
 PROPERTY_TYPES = ["ALL"] + sorted(data["PropertyType"].dropna().unique().tolist())
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
 def money(x):
     return f"${x:,.0f}"
+
+
+def display_property_type(value):
+    return PROPERTY_LABELS.get(value, value)
+
 
 def make_stat_card(title, value, subtitle="", accent="#3b82f6"):
     return html.Div(
@@ -120,6 +139,7 @@ def make_stat_card(title, value, subtitle="", accent="#3b82f6"):
             "minWidth": "190px"
         },
     )
+
 
 def make_listing_card(row, selected_id=None):
     badge = row["PricingLabel"]
@@ -176,7 +196,7 @@ def make_listing_card(row, selected_id=None):
                         },
                     ),
                     html.Div(
-                        f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {row['PropertyType']}",
+                        f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}",
                         style={
                             "fontSize": "14px",
                             "color": "#64748b",
@@ -225,28 +245,32 @@ def make_listing_card(row, selected_id=None):
         }
     )
 
+
 def property_button(value, selected_value):
     selected = value == selected_value
-    label = "All" if value == "ALL" else value
+    label = display_property_type(value)
 
     return html.Button(
         label,
         id={"type": "property-chip", "index": value},
         n_clicks=0,
         style={
-            "padding": "10px 14px",
-            "borderRadius": "999px",
-            "border": "1px solid #dbeafe" if selected else "1px solid #e2e8f0",
-            "background": "linear-gradient(135deg, #2563eb, #60a5fa)" if selected else "white",
-            "color": "white" if selected else "#334155",
+            "padding": "12px 18px",
+            "borderRadius": "14px",
+            "border": "2px solid #3b82f6" if selected else "1px solid #dbeafe",
+            "background": "#3b82f6" if selected else "#ffffff",
+            "color": "white" if selected else "#1e293b",
             "fontWeight": "700",
-            "fontSize": "13px",
+            "fontSize": "14px",
             "cursor": "pointer",
-            "boxShadow": "0 8px 18px rgba(37,99,235,0.18)" if selected else "none",
+            "boxShadow": "0 4px 12px rgba(59,130,246,0.18)" if selected else "none",
             "transition": "all 0.2s ease",
-            "margin": "0 8px 8px 0"
+            "minWidth": "140px",
+            "textAlign": "center",
+            "width": "100%"
         }
     )
+
 
 # -----------------------------
 # App setup
@@ -283,8 +307,29 @@ app.layout = html.Div(
                     style={"marginBottom": "20px"}
                 ),
 
-                html.Div("Property Type", style={"fontSize": "14px", "fontWeight": "700", "marginBottom": "10px", "color": "#475569"}),
-                html.Div(id="property-type-buttons", style={"display": "flex", "flexWrap": "wrap"}),
+                html.Div("Property Type", style={
+                    "fontSize": "14px",
+                    "fontWeight": "700",
+                    "marginBottom": "6px",
+                    "color": "#475569"
+                }),
+                html.Div(
+                    "Choose the kind of home you want to view.",
+                    style={
+                        "fontSize": "12px",
+                        "color": "#64748b",
+                        "marginBottom": "10px"
+                    }
+                ),
+                html.Div(
+                    id="property-type-buttons",
+                    style={
+                        "display": "grid",
+                        "gridTemplateColumns": "repeat(2, minmax(140px, 1fr))",
+                        "gap": "10px",
+                        "marginBottom": "8px"
+                    }
+                ),
 
                 html.Div(
                     [
@@ -305,7 +350,7 @@ app.layout = html.Div(
                 ),
             ],
             style={
-                "width": "300px",
+                "width": "320px",
                 "background": "linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%)",
                 "padding": "28px 22px",
                 "borderRight": "1px solid #e2e8f0",
@@ -480,12 +525,14 @@ def update_property_type(_):
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
     return ast.literal_eval(triggered_id)["index"]
 
+
 @app.callback(
     Output("property-type-buttons", "children"),
     Input("property-type-store", "data")
 )
 def render_property_buttons(selected_property):
     return [property_button(value, selected_property) for value in PROPERTY_TYPES]
+
 
 # -----------------------------
 # Selection callbacks
@@ -502,6 +549,7 @@ def select_property_from_card(_):
 
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
     return ast.literal_eval(triggered_id)["index"]
+
 
 @app.callback(
     Output("selected-property-store", "data"),
@@ -523,6 +571,7 @@ def select_property(map_click, scatter_click):
         return scatter_click["points"][0]["customdata"][0]
 
     return dash.no_update
+
 
 # -----------------------------
 # Main dashboard callback
@@ -753,6 +802,7 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
 
     return stats, map_fig, cards, scatter_fig, feature_fig, trend_fig
 
+
 # -----------------------------
 # Property insight panel
 # -----------------------------
@@ -840,7 +890,7 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
                         [
                             html.H2(row["Address"], style={"margin": "0", "color": "#0f172a"}),
                             html.Div(
-                                f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {row['PropertyType']}",
+                                f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}",
                                 style={"color": "#64748b", "marginTop": "4px"}
                             )
                         ]
@@ -923,6 +973,7 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
             )
         ]
     )
+
 
 if __name__ == "__main__":
     app.run(debug=True)
