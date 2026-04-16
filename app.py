@@ -3,7 +3,7 @@ import ast
 import numpy as np
 import pandas as pd
 import dash
-from dash import dcc, html, Input, Output
+from dash import dcc, html, Input, Output, State
 from dash.dependencies import ALL
 import plotly.express as px
 
@@ -19,7 +19,6 @@ if os.path.exists(pred_path):
 else:
     data["PredictedPrice"] = np.nan
 
-# Fallback display prediction if submission.csv does not align with train.csv
 if data["PredictedPrice"].isna().all():
     quality_adj = (data["OverallQual"].fillna(5) - 5) * 0.025
     area_adj = (
@@ -36,6 +35,9 @@ else:
 data["ListedPrice"] = data["SalePrice"]
 data["PriceGap"] = data["ListedPrice"] - data["PredictedPrice"]
 data["GapPct"] = data["PriceGap"] / data["PredictedPrice"]
+data["PropertyType"] = data["BldgType"].fillna("House")
+data["Bedrooms"] = data["BedroomAbvGr"].fillna(0).astype(int)
+data["Age"] = data["YrSold"].fillna(2010) - data["YearBuilt"].fillna(data["YearBuilt"].median())
 
 
 def pricing_label(x):
@@ -54,11 +56,16 @@ def label_color(label):
     }.get(label, "#64748b")
 
 
-data["PricingLabel"] = data["GapPct"].apply(pricing_label)
-data["PropertyType"] = data["BldgType"].fillna("House")
-data["Bedrooms"] = data["BedroomAbvGr"].fillna(0).astype(int)
+def label_bg(label):
+    return {
+        "Overpriced": "rgba(249,115,22,0.12)",
+        "Undervalued": "rgba(245,158,11,0.12)",
+        "Fairly priced": "rgba(34,197,94,0.12)"
+    }.get(label, "rgba(100,116,139,0.12)")
 
-# User-friendly property type labels
+
+data["PricingLabel"] = data["GapPct"].apply(pricing_label)
+
 PROPERTY_LABELS = {
     "ALL": "All Homes",
     "1Fam": "Single Family",
@@ -68,7 +75,6 @@ PROPERTY_LABELS = {
     "TwnhsE": "End-Unit Townhome"
 }
 
-# Neighborhood coordinates
 lat_map = {
     'CollgCr': 42.025, 'Veenker': 42.030, 'Crawfor': 42.022, 'NoRidge': 42.050,
     'Mitchel': 42.018, 'Somerst': 42.031, 'NWAmes': 42.040, 'OldTown': 42.016,
@@ -88,7 +94,6 @@ lon_map = {
 data["Latitude"] = data["Neighborhood"].map(lat_map).fillna(42.03)
 data["Longitude"] = data["Neighborhood"].map(lon_map).fillna(-93.65)
 
-# Demo address labels
 street_names = [
     "Main St", "Oak Ave", "Pine St", "Maple Dr", "Cedar Ln",
     "Elm St", "Park Ave", "Hill Dr", "Lakeview Rd", "Sunset Blvd"
@@ -99,7 +104,6 @@ data["Address"] = data.apply(
 )
 
 PROPERTY_TYPES = ["ALL"] + sorted(data["PropertyType"].dropna().unique().tolist())
-
 
 # -----------------------------
 # Helpers
@@ -112,32 +116,60 @@ def display_property_type(value):
     return PROPERTY_LABELS.get(value, value)
 
 
+def glass_card(radius="24px", padding="20px"):
+    return {
+        "background": "rgba(255,255,255,0.78)",
+        "backdropFilter": "blur(14px)",
+        "WebkitBackdropFilter": "blur(14px)",
+        "padding": padding,
+        "borderRadius": radius,
+        "boxShadow": "0 16px 40px rgba(15, 23, 42, 0.08)",
+        "border": "1px solid rgba(255,255,255,0.6)",
+        "boxSizing": "border-box"
+    }
+
+
 def make_stat_card(title, value, subtitle="", accent="#3b82f6"):
     return html.Div(
         [
             html.Div(
                 style={
-                    "width": "42px",
-                    "height": "42px",
-                    "borderRadius": "14px",
-                    "background": f"linear-gradient(135deg, {accent}, #dbeafe)",
+                    "width": "46px",
+                    "height": "46px",
+                    "borderRadius": "16px",
+                    "background": f"linear-gradient(135deg, {accent}, rgba(255,255,255,0.95))",
                     "marginBottom": "14px",
-                    "opacity": "0.9"
+                    "boxShadow": f"0 10px 24px {accent}30"
                 }
             ),
-            html.Div(title, style={"fontSize": "13px", "color": "#64748b", "marginBottom": "6px", "fontWeight": "600"}),
-            html.Div(value, style={"fontSize": "30px", "fontWeight": "800", "color": "#0f172a"}),
+            html.Div(title, style={"fontSize": "13px", "color": "#64748b", "marginBottom": "6px", "fontWeight": "700"}),
+            html.Div(value, style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a"}),
+
             html.Div(subtitle, style={"fontSize": "12px", "color": "#94a3b8", "marginTop": "4px"}),
         ],
         style={
-            "background": "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
-            "padding": "20px",
-            "borderRadius": "20px",
-            "boxShadow": "0 10px 30px rgba(15, 23, 42, 0.08)",
-            "border": "1px solid rgba(226,232,240,0.8)",
+            **glass_card(radius="22px", padding="20px"),
             "flex": "1",
-            "minWidth": "190px"
+            "minWidth": "200px",
+            "transition": "transform 0.2s ease, box-shadow 0.2s ease"
         },
+        className="hover-card"
+    )
+
+
+def make_mini_metric(title, value, subtitle=""):
+    return html.Div(
+        [
+            html.Div(title, style={"fontSize": "12px", "color": "#94a3b8", "fontWeight": "700"}),
+            html.Div(value, style={"fontSize": "20px", "fontWeight": "900", "color": "#0f172a", "marginTop": "4px"}),
+            html.Div(subtitle, style={"fontSize": "12px", "color": "#64748b", "marginTop": "2px"}),
+        ],
+        style={
+            "padding": "16px",
+            "borderRadius": "18px",
+            "background": "rgba(248,250,252,0.9)",
+            "border": "1px solid rgba(226,232,240,0.9)"
+        }
     )
 
 
@@ -151,16 +183,16 @@ def make_listing_card(row, selected_id=None):
             html.Div(
                 "🏡",
                 style={
-                    "width": "108px",
-                    "height": "108px",
-                    "borderRadius": "18px",
-                    "background": "linear-gradient(135deg, #dbeafe 0%, #eff6ff 45%, #f8fafc 100%)",
+                    "width": "102px",
+                    "height": "102px",
+                    "borderRadius": "20px",
+                    "background": "linear-gradient(135deg, #dbeafe 0%, #bfdbfe 50%, #ffffff 100%)",
                     "display": "flex",
                     "alignItems": "center",
                     "justifyContent": "center",
-                    "fontSize": "42px",
+                    "fontSize": "36px",
                     "flexShrink": "0",
-                    "boxShadow": "inset 0 1px 0 rgba(255,255,255,0.7)"
+                    "boxShadow": "inset 0 1px 0 rgba(255,255,255,0.75)"
                 },
             ),
             html.Div(
@@ -168,80 +200,79 @@ def make_listing_card(row, selected_id=None):
                     html.Div(
                         [
                             html.Div(
-                                row["Address"],
-                                style={
-                                    "fontSize": "24px",
-                                    "fontWeight": "800",
-                                    "color": "#0f172a",
-                                    "lineHeight": "1.1"
-                                }
+                                [
+                                    html.Div(
+                                        row["Address"],
+                                        style={
+                                            "fontSize": "22px",
+                                            "fontWeight": "900",
+                                            "color": "#0f172a",
+                                            "lineHeight": "1.1"
+                                        }
+                                    ),
+                                    html.Div(
+                                        f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}",
+                                        style={
+                                            "fontSize": "14px",
+                                            "color": "#64748b",
+                                            "marginTop": "7px",
+                                            "fontWeight": "600"
+                                        }
+                                    ),
+                                ],
+                                style={"flex": "1"}
                             ),
-                            html.Span(
-                                badge,
-                                style={
-                                    "background": badge_color,
-                                    "color": "white",
-                                    "padding": "6px 12px",
-                                    "borderRadius": "999px",
-                                    "fontSize": "12px",
-                                    "fontWeight": "700"
-                                },
-                            ),
+                            html.Div(
+                                [
+                                    html.Span(
+                                        "Selected" if is_selected else badge,
+                                        style={
+                                            "background": label_bg(badge) if not is_selected else "rgba(59,130,246,0.14)",
+                                            "color": badge_color if not is_selected else "#1e40af",
+                                            "padding": "7px 12px",
+                                            "borderRadius": "999px",
+                                            "fontSize": "12px",
+                                            "fontWeight": "800",
+                                            "border": f"1px solid {badge_color}22" if not is_selected else "1px solid rgba(59,130,246,0.18)"
+                                        },
+                                    )
+                                ]
+                            )
                         ],
-                        style={
-                            "display": "flex",
-                            "justifyContent": "space-between",
-                            "alignItems": "flex-start",
-                            "gap": "12px"
-                        },
-                    ),
-                    html.Div(
-                        f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}",
-                        style={
-                            "fontSize": "14px",
-                            "color": "#64748b",
-                            "marginTop": "8px",
-                            "fontWeight": "500"
-                        }
+                        style={"display": "flex", "justifyContent": "space-between", "gap": "12px", "alignItems": "flex-start"},
                     ),
                     html.Div(
                         [
-                            html.Div(
-                                [
-                                    html.Div("Listed Price", style={"fontSize": "12px", "color": "#94a3b8"}),
-                                    html.Div(money(row["ListedPrice"]), style={"fontSize": "22px", "fontWeight": "800", "color": "#111827"})
-                                ]
-                            ),
-                            html.Div(
-                                [
-                                    html.Div("Predicted Price", style={"fontSize": "12px", "color": "#94a3b8"}),
-                                    html.Div(money(row["PredictedPrice"]), style={"fontSize": "22px", "fontWeight": "800", "color": "#111827"})
-                                ]
-                            ),
+                            make_mini_metric("Listed Price", money(row["ListedPrice"])),
+                            make_mini_metric("AI Price Estimate", money(row["PredictedPrice"])),
                         ],
-                        style={"display": "flex", "gap": "28px", "marginTop": "18px", "flexWrap": "wrap"},
-                    ),
+                        style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "12px", "marginTop": "16px"}
+                    )
                 ],
                 style={"flex": "1", "textAlign": "left"},
             ),
         ],
-        id={"type": "listing-card", "index": int(row["Id"])},
+        id={"type": "listing-card", "index": int(row["Id"])} ,
         n_clicks=0,
+        className="listing-hover",
         style={
             "display": "flex",
             "gap": "16px",
             "padding": "18px",
             "width": "100%",
-            "background": "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
-            "borderRadius": "22px",
-            "boxShadow": "0 12px 32px rgba(15, 23, 42, 0.08)",
-            "border": "2px solid #60a5fa" if is_selected else "1px solid rgba(226,232,240,0.85)",
+            "background": "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.9) 100%)",
+            "borderRadius": "24px",
+            "boxShadow": "0 12px 30px rgba(15, 23, 42, 0.08)",
+            "border": "2px solid #3b82f6" if is_selected else "1px solid rgba(226,232,240,0.85)",
             "marginBottom": "16px",
             "cursor": "pointer",
             "textAlign": "left",
             "appearance": "none",
             "WebkitAppearance": "none",
-            "outline": "none"
+            "outline": "none",
+            "transform": "translateY(-2px)" if is_selected else "none",
+            "boxShadow": "0 18px 38px rgba(59,130,246,0.16)" if is_selected else "0 12px 30px rgba(15, 23, 42, 0.08)",
+            "transition": "all 0.2s ease"
         }
     )
 
@@ -255,20 +286,172 @@ def property_button(value, selected_value):
         id={"type": "property-chip", "index": value},
         n_clicks=0,
         style={
-            "padding": "12px 18px",
+            "padding": "10px 12px",
             "borderRadius": "14px",
-            "border": "2px solid #3b82f6" if selected else "1px solid #dbeafe",
-            "background": "#3b82f6" if selected else "#ffffff",
+            "border": "1px solid rgba(59,130,246,0.22)" if selected else "1px solid #dbeafe",
+            "background": "linear-gradient(135deg, #1e40af, #60a5fa)" if selected else "rgba(255,255,255,0.9)",
             "color": "white" if selected else "#1e293b",
-            "fontWeight": "700",
-            "fontSize": "14px",
+            "fontWeight": "800",
+            "fontSize": "13px",
             "cursor": "pointer",
-            "boxShadow": "0 4px 12px rgba(59,130,246,0.18)" if selected else "none",
+            "boxShadow": "0 10px 20px rgba(59,130,246,0.22)" if selected else "0 4px 12px rgba(15,23,42,0.04)",
             "transition": "all 0.2s ease",
-            "minWidth": "140px",
+            "minWidth": "90px",
             "textAlign": "center",
             "width": "100%"
+        },
+        className="chip-hover"
+    )
+
+
+def build_explanation(row):
+    reasons = []
+    if row["GrLivArea"] >= data["GrLivArea"].median():
+        reasons.append("Larger living area supports a higher estimated value.")
+    else:
+        reasons.append("Smaller living area pulls the estimate down compared to many homes.")
+
+    if row["OverallQual"] >= data["OverallQual"].median():
+        reasons.append("Above-average quality rating helps the predicted price.")
+    else:
+        reasons.append("Below-average quality rating lowers the predicted price.")
+
+    if row["Age"] >= data["Age"].median():
+        reasons.append("The property is older, which can reduce price compared to newer homes.")
+    else:
+        reasons.append("The property is relatively newer, which supports value.")
+
+    if row["GapPct"] > 0.08:
+        reasons.append("The listed price is noticeably above the AI estimate.")
+    elif row["GapPct"] < -0.08:
+        reasons.append("The listed price is below the AI estimate, which may suggest a value opportunity.")
+    else:
+        reasons.append("The listed price is close to the AI estimate.")
+    return reasons[:4]
+
+
+def get_filtered_data(neighborhood, bedrooms, property_type):
+    filtered = data.copy()
+    if neighborhood != "ALL":
+        filtered = filtered[filtered["Neighborhood"] == neighborhood]
+    if bedrooms != -1:
+        filtered = filtered[filtered["Bedrooms"] == bedrooms]
+    if property_type != "ALL":
+        filtered = filtered[filtered["PropertyType"] == property_type]
+    if filtered.empty:
+        filtered = data.head(10).copy()
+    return filtered
+
+
+def make_chat_message(role, text):
+    is_user = role == "user"
+    return html.Div(
+        text,
+        style={
+            "maxWidth": "88%",
+            "width": "fit-content",
+            "alignSelf": "flex-end" if is_user else "flex-start",
+            "background": "linear-gradient(135deg, #1e40af, #60a5fa)" if is_user else "rgba(248,250,252,0.95)",
+            "color": "white" if is_user else "#334155",
+            "padding": "10px 12px",
+            "borderRadius": "14px",
+            "fontSize": "13px",
+            "lineHeight": "1.5",
+            "marginBottom": "10px",
+            "border": "none" if is_user else "1px solid rgba(226,232,240,0.9)",
+            "wordBreak": "break-word",
+            "overflowWrap": "anywhere"
         }
+    )
+
+
+def generate_ai_insights(selected_id, neighborhood, bedrooms, property_type):
+    """Generate real-time AI insights for the selected property"""
+    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
+    
+    if selected_id is not None and selected_id in data["Id"].values:
+        row = data[data["Id"] == selected_id].iloc[0]
+    else:
+        return None
+    
+    insights = []
+    gap_pct = row["GapPct"] * 100
+    neigh_avg = data[data["Neighborhood"] == row["Neighborhood"]]["ListedPrice"].mean()
+    
+    # Deal Alert
+    if gap_pct < -15:
+        insights.append(f"🚀 Great Deal! This home is {abs(gap_pct):.1f}% below market estimate.")
+    elif gap_pct > 15:
+        insights.append(f"⚠️ Overpriced Alert: {gap_pct:.1f}% above the AI estimate.")
+    
+    # Value Analysis
+    if row["GrLivArea"] > data["GrLivArea"].quantile(0.75):
+        insights.append(f"💪 Spacious: {row['GrLivArea']:.0f} sq ft (top 25% in dataset).")
+    
+    # Market Position
+    price_diff = row["ListedPrice"] - neigh_avg
+    if abs(price_diff) > data["ListedPrice"].std():
+        insights.append(f"📍 Neighborhood Position: {abs(price_diff/1000):.1f}K {'above' if price_diff > 0 else 'below'} neighborhood avg.")
+    
+    # Condition Assessment
+    if row["OverallQual"] >= 8:
+        insights.append(f"✨ Premium Quality: Rating {row['OverallQual']}/10")
+    elif row["OverallQual"] <= 4:
+        insights.append(f"🔧 Renovation Opportunity: Quality rating {row['OverallQual']}/10")
+    
+    return insights[:3]
+
+
+def build_chat_reply(user_text, selected_id, neighborhood, bedrooms, property_type):
+    question = (user_text or "").strip().lower()
+    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
+
+    if selected_id is not None and selected_id in data["Id"].values:
+        row = data[data["Id"] == selected_id].iloc[0]
+    else:
+        row = filtered.iloc[0]
+
+    neigh_avg = data[data["Neighborhood"] == row["Neighborhood"]]["ListedPrice"].mean()
+    gap_pct = row["GapPct"] * 100
+
+    if any(word in question for word in ["why", "reason", "label", "labeled"]):
+        return " ".join(build_explanation(row)[:2])
+
+    if any(word in question for word in ["price", "estimate", "listed", "gap", "deal", "bargain", "value"]):
+        response = (
+            f"{row['Address']} is listed at {money(row['ListedPrice'])}. "
+            f"The AI estimate is {money(row['PredictedPrice'])}, so the price gap is {gap_pct:.1f}%. "
+            f"Right now it is labeled {row['PricingLabel'].lower()}."
+        )
+        if abs(gap_pct) > 10:
+            response += f" This is a significant {'premium' if gap_pct > 0 else 'opportunity'}."
+        return response
+
+    if any(word in question for word in ["average", "market", "neighborhood", "compare"]):
+        return (
+            f"For {row['Neighborhood']}, the neighborhood average is {money(neigh_avg)}. "
+            f"This home has {row['GrLivArea']:.0f} sq ft, quality {row['OverallQual']}, and age {row['Age']:.0f} years. "
+            f"That helps explain how it compares to nearby homes."
+        )
+
+    if any(word in question for word in ["filter", "filtered", "results", "homes"]):
+        return (
+            f"Your current filters show {len(filtered)} homes. "
+            f"Neighborhood: {neighborhood if neighborhood != 'ALL' else 'All'}, "
+            f"Bedrooms: {bedrooms if bedrooms != -1 else 'Any'}, "
+            f"Property type: {display_property_type(property_type)}."
+        )
+
+    if any(word in question for word in ["recommend", "suggest", "best", "advice"]):
+        best_deals = filtered.nsmallest(3, "GapPct")[["Address", "ListedPrice", "GapPct"]]
+        if len(best_deals) > 0:
+            top_deal = best_deals.iloc[0]
+            return f"💡 Based on value: {top_deal['Address']} at {money(top_deal['ListedPrice'])} (gap: {top_deal['GapPct']*100:.1f}%)"
+        return "Not enough data for recommendations yet."
+
+    return (
+        f"You can ask me about price, deals, market comparisons, or recommendations. "
+        f"Right now I am focused on {row['Address']}, which is marked {row['PricingLabel'].lower()}."
     )
 
 
@@ -277,236 +460,350 @@ def property_button(value, selected_value):
 # -----------------------------
 app = dash.Dash(__name__)
 app.title = "Real Estate Analytics"
+app.index_string = """
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            body {
+                margin: 0;
+                background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 45%, #f0f9ff 100%);
+                background-size: 180% 180%;
+                animation: gradientShift 18s ease infinite;
+            }
+            @keyframes gradientShift {
+                0% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
+                100% { background-position: 0% 50%; }
+            }
+            @keyframes fadeSlideUp {
+                from { opacity: 0; transform: translateY(18px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            @keyframes floatPulse {
+                0% { transform: translateY(0px); }
+                50% { transform: translateY(-6px); }
+                100% { transform: translateY(0px); }
+            }
+            @keyframes shimmer {
+                0% { background-position: -200% 0; }
+                100% { background-position: 200% 0; }
+            }
+            .page-shell {
+                animation: fadeSlideUp 0.8s ease;
+            }
+            .hero-title {
+                animation: fadeSlideUp 0.9s ease;
+            }
+            .floating-badge {
+                animation: floatPulse 3.8s ease-in-out infinite;
+            }
+            .hover-card, .listing-hover, .chip-hover, .chat-card, .glass-panel {
+                animation: fadeSlideUp 0.7s ease;
+            }
+            .hover-card:hover {
+                transform: translateY(-8px) scale(1.01);
+                box-shadow: 0 22px 48px rgba(59,130,246,0.16) !important;
+            }
+            .listing-hover:hover {
+                transform: translateY(-6px) scale(1.01) !important;
+                box-shadow: 0 24px 46px rgba(15, 23, 42, 0.13) !important;
+            }
+            .chip-hover:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 16px 32px rgba(59,130,246,0.18) !important;
+            }
+            .glass-panel:hover, .chat-card:hover {
+                box-shadow: 0 22px 52px rgba(15, 23, 42, 0.10) !important;
+            }
+            .sparkle-dot {
+                background: linear-gradient(90deg, rgba(255,255,255,0.4), rgba(255,255,255,0.95), rgba(255,255,255,0.4));
+                background-size: 200% 100%;
+                animation: shimmer 2.8s linear infinite;
+            }
+            .dash-graph {
+                transition: transform 0.25s ease, box-shadow 0.25s ease;
+            }
+            .dash-graph:hover {
+                transform: translateY(-4px);
+            }
+            * {
+                scroll-behavior: smooth;
+            }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+"""
 
 app.layout = html.Div(
     [
+        
         dcc.Store(id="property-type-store", data="ALL"),
         dcc.Store(id="selected-property-store"),
-
-        html.Div(
-            [
-                html.Div("Filters", style={"fontSize": "28px", "fontWeight": "800", "color": "#0f172a", "marginBottom": "22px"}),
-
-                html.Div("Neighborhood", style={"fontSize": "14px", "fontWeight": "700", "marginBottom": "8px", "color": "#475569"}),
-                dcc.Dropdown(
-                    id="neighborhood-filter",
-                    options=[{"label": "All Neighborhoods", "value": "ALL"}] +
-                            [{"label": n, "value": n} for n in sorted(data["Neighborhood"].dropna().unique())],
-                    value="ALL",
-                    clearable=False,
-                    style={"marginBottom": "20px"}
-                ),
-
-                html.Div("Bedrooms", style={"fontSize": "14px", "fontWeight": "700", "marginBottom": "8px", "color": "#475569"}),
-                dcc.Dropdown(
-                    id="bedroom-filter",
-                    options=[{"label": "Any", "value": -1}] +
-                            [{"label": f"{b} Bedrooms", "value": int(b)} for b in sorted(data["Bedrooms"].dropna().unique())],
-                    value=-1,
-                    clearable=False,
-                    style={"marginBottom": "20px"}
-                ),
-
-                html.Div("Property Type", style={
-                    "fontSize": "14px",
-                    "fontWeight": "700",
-                    "marginBottom": "6px",
-                    "color": "#475569"
-                }),
-                html.Div(
-                    "Choose the kind of home you want to view.",
-                    style={
-                        "fontSize": "12px",
-                        "color": "#64748b",
-                        "marginBottom": "10px"
-                    }
-                ),
-                html.Div(
-                    id="property-type-buttons",
-                    style={
-                        "display": "grid",
-                        "gridTemplateColumns": "repeat(2, minmax(140px, 1fr))",
-                        "gap": "10px",
-                        "marginBottom": "8px"
-                    }
-                ),
-
-                html.Div(
-                    [
-                        html.Div("Project demo", style={"fontSize": "12px", "color": "#94a3b8", "fontWeight": "700", "textTransform": "uppercase", "letterSpacing": "0.08em"}),
-                        html.Div("AI-assisted pricing support", style={"fontSize": "20px", "fontWeight": "800", "color": "#0f172a", "marginTop": "8px"}),
-                        html.Div(
-                            "Click a property on the map, scatter plot, or listing card to see detailed pricing insights.",
-                            style={"fontSize": "13px", "color": "#64748b", "lineHeight": "1.6", "marginTop": "8px"}
-                        ),
-                    ],
-                    style={
-                        "marginTop": "28px",
-                        "padding": "18px",
-                        "borderRadius": "20px",
-                        "background": "linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)",
-                        "border": "1px solid #dbeafe"
-                    }
-                ),
-            ],
-            style={
-                "width": "320px",
-                "background": "linear-gradient(180deg, #f8fbff 0%, #f8fafc 100%)",
-                "padding": "28px 22px",
-                "borderRight": "1px solid #e2e8f0",
-                "minHeight": "100vh",
-                "position": "sticky",
-                "top": "0"
-            },
+        dcc.Store(
+            id="chat-history-store",
+            data=[
+                {
+                    "role": "assistant",
+                    "text": "Hi, I am the pricing assistant. Ask about the selected home, price gap, market average, or current filters."
+                }
+            ]
         ),
 
         html.Div(
             [
                 html.Div(
                     [
+                        html.Div("Filters", style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "16px"}),
+
+                        html.Div("Neighborhood", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "6px", "color": "#475569"}),
+                        dcc.Dropdown(
+                            id="neighborhood-filter",
+                            options=[{"label": "All Neighborhoods", "value": "ALL"}] +
+                                    [{"label": n, "value": n} for n in sorted(data["Neighborhood"].dropna().unique())],
+                            value="ALL",
+                            clearable=False,
+                            style={"marginBottom": "16px"}
+                        ),
+
+                        html.Div("Bedrooms", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "6px", "color": "#475569"}),
+
+                        dcc.Dropdown(
+                            id="bedroom-filter",
+                            options=[{"label": "Any", "value": -1}] +
+                                    [{"label": f"{b} Bedrooms", "value": int(b)} for b in sorted(data["Bedrooms"].dropna().unique())],
+                            value=-1,
+                            clearable=False,
+                            style={"marginBottom": "16px"}
+                        ),
+
+                        html.Div("Property Type", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "4px", "color": "#475569"}),
+                        html.Div(
+                            "Choose the kind of home you want to view.",
+                            style={"fontSize": "11px", "color": "#64748b", "marginBottom": "8px"}
+                        ),
+                        html.Div(
+                            id="property-type-buttons",
+                            style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(80px, 1fr))", "gap": "6px", "marginBottom": "8px"}
+                        ),
+
+                        html.Div(
+                            [
+                                html.Div("Project demo", style={"fontSize": "12px", "color": "#94a3b8", "fontWeight": "800", "textTransform": "uppercase", "letterSpacing": "0.08em"}),
+                                html.Div("AI-assisted pricing support", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginTop": "6px"}),
+                                html.Div(
+                                    "Click a property on the map, scatter plot, or listing card to see detailed pricing insights.",
+                                    style={"fontSize": "13px", "color": "#64748b", "lineHeight": "1.4", "marginTop": "6px"}
+                                ),
+                            ],
+                            className="glass-panel",
+                            style={
+                                "marginTop": "14px",
+                                **glass_card(radius="22px", padding="14px"),
+                                "background": "linear-gradient(135deg, rgba(239,246,255,0.92) 0%, rgba(248,250,252,0.92) 100%)"
+                            }
+                        ),
+
+                        html.Div(
+                            [
+                                html.Div("Pricing Assistant", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a"}),
+                                html.Div("Quick Q&A for the selected property", style={"fontSize": "12px", "color": "#64748b", "marginTop": "4px"}),
+                                html.Div(
+                                    id="chat-messages",
+                                    children=[make_chat_message("assistant", "Hi, I am the pricing assistant. Ask about the selected home, price gap, market average, or current filters.")],
+                                    style={
+                                        "marginTop": "10px",
+                                        "height": "180px",
+                                        "overflowY": "auto",
+                                        "overflowX": "hidden",
+                                        "display": "flex",
+                                        "flexDirection": "column",
+                                        "boxSizing": "border-box"
+                                    }
+                                ),
+                                dcc.Input(
+                                    id="chat-input",
+                                    type="text",
+                                    placeholder="Ask about this home...",
+                                    style={
+                                        "width": "100%",
+                                        "marginTop": "10px",
+                                        "padding": "10px 12px",
+                                        "borderRadius": "14px",
+                                        "border": "1px solid rgba(203,213,225,0.95)",
+                                        "outline": "none",
+                                        "fontSize": "12px"
+                                    }
+                                ),
+                                html.Button(
+                                    "Send",
+                                    id="chat-send-btn",
+                                    n_clicks=0,
+                                    style={
+                                        "marginTop": "8px",
+                                        "width": "100%",
+                                        "padding": "10px 12px",
+                                        "borderRadius": "14px",
+                                        "border": "none",
+                                        "background": "linear-gradient(135deg, #1e40af, #60a5fa)",
+                                        "color": "white",
+                                        "fontWeight": "800",
+                                        "cursor": "pointer",
+                                        "boxShadow": "0 10px 22px rgba(59,130,246,0.24)"
+                                    }
+                                )
+                            ],
+                            className="chat-card",
+                            style={
+                                "marginTop": "12px",
+                                "minHeight": "300px",
+                                "width": "100%",
+                                "boxSizing": "border-box",
+                                **glass_card(radius="22px", padding="14px"),
+                                "background": "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(239,246,255,0.9) 100%)"
+                            }
+                        ),
+                    ],
+                    className="glass-panel",
+                    style={
+                        "width": "280px",
+                        "background": "linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(248,250,252,0.78) 100%)",
+                        "padding": "12px 10px",
+                        "borderRight": "1px solid rgba(226,232,240,0.85)",
+                        "minHeight": "auto",
+                        "maxHeight": "auto",
+                        "overflowY": "visible",
+                        "overflowX": "hidden",
+                        "position": "sticky",
+                        "top": "0",
+                        "boxSizing": "border-box",
+                        "backdropFilter": "blur(14px)",
+                        "WebkitBackdropFilter": "blur(14px)"
+                    },
+                ),
+
+                html.Div(
+                    [
                         html.Div(
                             [
                                 html.Div(
                                     [
-                                        html.Span("Real Estate Analytics", style={"fontSize": "52px", "fontWeight": "900", "color": "#0f172a"}),
-                                        html.Span(" ✦", style={"fontSize": "34px", "color": "#60a5fa", "fontWeight": "800"})
+                                        html.Div(
+                                            [
+                                                html.Span("Real Estate Analytics", className="hero-title", style={"fontSize": "38px", "fontWeight": "900", "color": "#0f172a"}),
+                                                html.Span(" ✦", style={"fontSize": "24px", "color": "#7c9cff", "fontWeight": "900"})
+                                            ]
+                                        ),
+                                        html.Div(
+                                            "AI-assisted pricing dashboard for listing comparison and decision support",
+                                            style={"fontSize": "16px", "color": "#64748b", "marginTop": "8px"}
+                                        )
                                     ]
                                 ),
                                 html.Div(
-                                    "AI-assisted pricing dashboard for listing comparison and decision support",
-                                    style={"fontSize": "16px", "color": "#64748b", "marginTop": "8px"}
+                                    [
+                                        html.Div(
+                                            [html.Span(className="sparkle-dot", style={"display": "inline-block", "width": "8px", "height": "8px", "borderRadius": "999px", "marginRight": "8px", "verticalAlign": "middle"}), "Connected • Demo mode"],
+                                            className="floating-badge",
+                                            style={
+                                                "background": "linear-gradient(135deg, #eff6ff, #dbeafe)",
+                                                "color": "#1d4ed8",
+                                                "padding": "10px 16px",
+                                                "borderRadius": "999px",
+                                                "fontSize": "13px",
+                                                "fontWeight": "800",
+                                                "border": "1px solid #bfdbfe"
+                                            }
+                                        )
+                                    ]
                                 )
-                            ]
+                            ],
+                            style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "24px"}
                         ),
-                        html.Div(
-                            [
-                                html.Div(
-                                    "Connected • Demo mode",
-                                    style={
-                                        "background": "linear-gradient(135deg, #eff6ff, #dbeafe)",
-                                        "color": "#1d4ed8",
-                                        "padding": "10px 16px",
-                                        "borderRadius": "999px",
-                                        "fontSize": "13px",
-                                        "fontWeight": "800",
-                                        "border": "1px solid #bfdbfe"
-                                    }
-                                )
-                            ]
-                        )
-                    ],
-                    style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "24px"}
-                ),
 
-                html.Div(id="stats-row", style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "22px"}),
+                        html.Div(id="stats-row", style={"display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "18px"}),
 
-                html.Div(
-                    [
                         html.Div(
                             [
                                 html.Div(
                                     [
-                                        html.Div("Map Zoom", style={"fontWeight": "700", "marginBottom": "6px", "color": "#334155"}),
-                                        dcc.Slider(
-                                            id="map-zoom-slider",
-                                            min=8,
-                                            max=16,
-                                            step=0.5,
-                                            value=11,
-                                            marks={i: str(i) for i in range(8, 17, 2)},
-                                            tooltip={"placement": "bottom", "always_visible": False}
+                                        html.Div(
+                                            [
+                                                html.Div("Map Zoom", style={"fontWeight": "800", "marginBottom": "6px", "color": "#334155"}),
+                                                dcc.Slider(
+                                                    id="map-zoom-slider",
+                                                    min=8,
+                                                    max=16,
+                                                    step=0.5,
+                                                    value=11,
+                                                    marks={i: str(i) for i in range(8, 17, 2)},
+                                                    tooltip={"placement": "bottom", "always_visible": False}
+                                                ),
+                                            ],
+                                            style={
+                                                "marginBottom": "12px",
+                                                "padding": "12px",
+                                                "background": "rgba(248,250,252,0.9)",
+                                                "borderRadius": "14px"
+                                            }
                                         ),
+                                        dcc.Graph(
+                                            id="map-graph",
+                                            config={"displayModeBar": False, "scrollZoom": True},
+                                            className="animated-graph",
+                                            style={"height": "530px"}
+                                        )
                                     ],
+                                    className="glass-panel",
+                                    style={"flex": "1.45", **glass_card(radius="26px", padding="12px")}
+                                ),
+                                html.Div(
+                                    id="listing-cards",
+                                    className="glass-panel",
                                     style={
-                                        "marginBottom": "12px",
-                                        "padding": "10px",
-                                        "background": "#f8fafc",
-                                        "borderRadius": "12px"
+                                        "flex": "1",
+                                        "maxHeight": "620px",
+                                        "overflowY": "auto",
+                                        "paddingRight": "8px"
                                     }
                                 ),
-                                dcc.Graph(
-                                    id="map-graph",
-                                    config={
-                                        "displayModeBar": False,
-                                        "scrollZoom": True
-                                    },
-                                    style={"height": "530px"}
-                                )
                             ],
-                            style={
-                                "flex": "1.45",
-                                "background": "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
-                                "padding": "12px",
-                                "borderRadius": "26px",
-                                "boxShadow": "0 12px 36px rgba(15, 23, 42, 0.08)",
-                                "border": "1px solid rgba(226,232,240,0.85)"
-                            }
+                            style={"display": "flex", "gap": "18px", "alignItems": "stretch", "marginBottom": "18px"}
                         ),
+
                         html.Div(
-                            id="listing-cards",
-                            style={
-                                "flex": "1",
-                                "maxHeight": "620px",
-                                "overflowY": "scroll",
-                                "paddingRight": "8px"
-                            }
+                            id="property-insight-panel",
+                            className="glass-panel",
+                            style={**glass_card(radius="24px", padding="18px"), "marginBottom": "18px"}
+                        ),
+
+                        html.Div(
+                            [
+                                html.Div(dcc.Graph(id="scatter-graph", config={"displayModeBar": False}, className="animated-graph"), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
+                                html.Div(dcc.Graph(id="feature-impact-graph", config={"displayModeBar": False}, className="animated-graph"), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
+                                html.Div(dcc.Graph(id="trend-graph", config={"displayModeBar": False}, className="animated-graph"), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
+                            ],
+                            style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "16px"}
                         ),
                     ],
-                    style={"display": "flex", "gap": "20px", "alignItems": "stretch", "marginBottom": "22px"}
-                ),
-
-                html.Div(
-                    id="property-insight-panel",
-                    style={
-                        "background": "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
-                        "padding": "22px",
-                        "borderRadius": "24px",
-                        "boxShadow": "0 12px 32px rgba(15, 23, 42, 0.08)",
-                        "border": "1px solid rgba(226,232,240,0.85)",
-                        "marginBottom": "22px"
-                    }
-                ),
-
-                html.Div(
-                    [
-                        html.Div(
-                            dcc.Graph(id="scatter-graph", config={"displayModeBar": False}),
-                            style={
-                                "background": "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
-                                "padding": "12px",
-                                "borderRadius": "24px",
-                                "boxShadow": "0 12px 32px rgba(15, 23, 42, 0.08)",
-                                "border": "1px solid rgba(226,232,240,0.85)"
-                            }
-                        ),
-                        html.Div(
-                            dcc.Graph(id="feature-impact-graph", config={"displayModeBar": False}),
-                            style={
-                                "background": "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
-                                "padding": "12px",
-                                "borderRadius": "24px",
-                                "boxShadow": "0 12px 32px rgba(15, 23, 42, 0.08)",
-                                "border": "1px solid rgba(226,232,240,0.85)"
-                            }
-                        ),
-                        html.Div(
-                            dcc.Graph(id="trend-graph", config={"displayModeBar": False}),
-                            style={
-                                "background": "linear-gradient(180deg, #ffffff 0%, #fbfdff 100%)",
-                                "padding": "12px",
-                                "borderRadius": "24px",
-                                "boxShadow": "0 12px 32px rgba(15, 23, 42, 0.08)",
-                                "border": "1px solid rgba(226,232,240,0.85)"
-                            }
-                        ),
-                    ],
-                    style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "20px"}
-                ),
+                    style={"flex": "1", "padding": "20px", "background": "transparent"}
+                )
             ],
-            style={"flex": "1", "padding": "28px", "background": "#f1f5f9"}
+            className="page-shell", style={"display": "flex", "fontFamily": "Inter, Arial, sans-serif", "minHeight": "100vh"}
         )
-    ],
-    style={"display": "flex", "fontFamily": "Inter, Arial, sans-serif", "background": "#f1f5f9"}
+    ]
 )
 
 # -----------------------------
@@ -521,7 +818,6 @@ def update_property_type(_):
     ctx = dash.callback_context
     if not ctx.triggered:
         return "ALL"
-
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
     return ast.literal_eval(triggered_id)["index"]
 
@@ -546,7 +842,6 @@ def select_property_from_card(_):
     ctx = dash.callback_context
     if not ctx.triggered:
         return dash.no_update
-
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
     return ast.literal_eval(triggered_id)["index"]
 
@@ -563,14 +858,44 @@ def select_property(map_click, scatter_click):
         return dash.no_update
 
     trigger = ctx.triggered[0]["prop_id"].split(".")[0]
-
     if trigger == "map-graph" and map_click:
         return map_click["points"][0]["customdata"][0]
-
     if trigger == "scatter-graph" and scatter_click:
         return scatter_click["points"][0]["customdata"][0]
-
     return dash.no_update
+
+
+# -----------------------------
+# Chatbot callbacks
+# -----------------------------
+@app.callback(
+    Output("chat-history-store", "data"),
+    Output("chat-messages", "children"),
+    Output("chat-input", "value"),
+    Input("chat-send-btn", "n_clicks"),
+    Input("chat-input", "n_submit"),
+    State("chat-input", "value"),
+    State("chat-history-store", "data"),
+    State("selected-property-store", "data"),
+    State("neighborhood-filter", "value"),
+    State("bedroom-filter", "value"),
+    State("property-type-store", "data"),
+    prevent_initial_call=True
+)
+def update_chatbot(_, __, user_text, history, selected_id, neighborhood, bedrooms, property_type):
+    history = history or []
+    if not user_text or not user_text.strip():
+        rendered = [make_chat_message(msg["role"], msg["text"]) for msg in history]
+        return history, rendered, ""
+
+    user_text = user_text.strip()
+    reply = build_chat_reply(user_text, selected_id, neighborhood, bedrooms, property_type)
+    history = history + [
+        {"role": "user", "text": user_text},
+        {"role": "assistant", "text": reply}
+    ]
+    rendered = [make_chat_message(msg["role"], msg["text"]) for msg in history]
+    return history, rendered, ""
 
 
 # -----------------------------
@@ -590,34 +915,22 @@ def select_property(map_click, scatter_click):
     Input("map-zoom-slider", "value"),
 )
 def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_value):
-    filtered = data.copy()
+    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
 
-    if neighborhood != "ALL":
-        filtered = filtered[filtered["Neighborhood"] == neighborhood]
-    if bedrooms != -1:
-        filtered = filtered[filtered["Bedrooms"] == bedrooms]
-    if property_type != "ALL":
-        filtered = filtered[filtered["PropertyType"] == property_type]
-
-    if filtered.empty:
-        filtered = data.head(10).copy()
 
     overpriced_count = int((filtered["PricingLabel"] == "Overpriced").sum())
     fair_count = int((filtered["PricingLabel"] == "Fairly priced").sum())
 
     stats = [
-        make_stat_card("Listings", f"{len(filtered):,}", "Current filtered view", "#60a5fa"),
-        make_stat_card("Avg Listed Price", money(filtered["ListedPrice"].mean()), "Observed listing price", "#818cf8"),
-        make_stat_card("Avg Predicted Price", money(filtered["PredictedPrice"].mean()), "Model estimate", "#34d399"),
-        make_stat_card("Flagged Overpriced", f"{overpriced_count}", f"{fair_count} fairly priced homes", "#fb923c"),
+        make_stat_card("Listings", f"{len(filtered):,}", "Current filtered view", "#8bb5ff"),
+        make_stat_card("Avg Listed Price", money(filtered["ListedPrice"].mean()), "Observed listing price", "#9c9df4"),
+        make_stat_card("AI Price Estimate", money(filtered["PredictedPrice"].mean()), "Model estimate", "#7adab3"),
+        make_stat_card("Flagged Overpriced", f"{overpriced_count}", f"{fair_count} fairly priced homes", "#f5b06f"),
     ]
 
-    # Map
     center_lat = filtered["Latitude"].mean()
     center_lon = filtered["Longitude"].mean()
-
-    if zoom_value is None:
-        zoom_value = 11
+    zoom_value = 11 if zoom_value is None else zoom_value
 
     map_fig = px.scatter_mapbox(
         filtered,
@@ -651,38 +964,24 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
         plot_bgcolor="white",
         uirevision="map-stable",
         legend_title_text="",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=0.98,
-            xanchor="left",
-            x=0.02,
-            bgcolor="rgba(255,255,255,0.7)"
-        ),
+        legend=dict(orientation="h", yanchor="bottom", y=0.98, xanchor="left", x=0.02, bgcolor="rgba(255,255,255,0.7)"),
         clickmode="event+select"
     )
     map_fig.update_traces(marker={"opacity": 0.88}, selector=dict(mode="markers"))
+    map_fig.update_layout(transition={"duration": 500, "easing": "cubic-in-out"})
 
-    # Cards
     sorted_filtered = filtered.sort_values("GapPct", ascending=False).copy()
-
     if selected_id is not None and selected_id in sorted_filtered["Id"].values:
         selected_row_df = sorted_filtered[sorted_filtered["Id"] == selected_id]
         other_rows = sorted_filtered[sorted_filtered["Id"] != selected_id]
         sorted_filtered = pd.concat([selected_row_df, other_rows], axis=0)
+    cards = [make_listing_card(row, selected_id=selected_id) for _, row in sorted_filtered.iterrows()]
 
-    card_rows = sorted_filtered.to_dict("records")
-    cards = [make_listing_card(row, selected_id=selected_id) for row in card_rows]
-
-    # Selected property fallback
     if selected_id is not None and selected_id in data["Id"].values:
         selected_row = data[data["Id"] == selected_id].iloc[0]
     else:
         selected_row = filtered.iloc[0]
 
-    # -----------------------------
-    # Chart 1: Scatter with selected property highlighted
-    # -----------------------------
     scatter_fig = px.scatter(
         filtered,
         x="GrLivArea",
@@ -699,7 +998,6 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
             "Undervalued": "#f59e0b",
         }
     )
-
     scatter_fig.add_scatter(
         x=[selected_row["GrLivArea"]],
         y=[selected_row["ListedPrice"]],
@@ -709,7 +1007,6 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
         marker=dict(size=24, color="#111827", symbol="star"),
         name="Selected Property"
     )
-
     scatter_fig.update_layout(
         paper_bgcolor="white",
         plot_bgcolor="white",
@@ -719,35 +1016,26 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
         clickmode="event+select"
     )
     scatter_fig.update_traces(marker={"opacity": 0.75}, selector=dict(mode="markers"))
+    scatter_fig.update_layout(transition={"duration": 450, "easing": "cubic-in-out"})
 
-    # -----------------------------
-    # Chart 2: Selected property vs dataset average
-    # -----------------------------
     compare_df = pd.DataFrame({
         "Feature": ["Living Area", "Overall Quality", "Age", "Garage Cars", "Bathrooms"],
         "Selected Property": [
             selected_row["GrLivArea"],
             selected_row["OverallQual"],
-            selected_row["YrSold"] - selected_row["YearBuilt"],
+            selected_row["Age"],
             selected_row["GarageCars"] if pd.notna(selected_row["GarageCars"]) else 0,
             selected_row["FullBath"] if pd.notna(selected_row["FullBath"]) else 0,
         ],
         "Dataset Average": [
             data["GrLivArea"].mean(),
             data["OverallQual"].mean(),
-            (data["YrSold"] - data["YearBuilt"]).mean(),
+            data["Age"].mean(),
             data["GarageCars"].fillna(0).mean(),
             data["FullBath"].fillna(0).mean(),
         ]
     })
-
-    compare_long = compare_df.melt(
-        id_vars="Feature",
-        value_vars=["Selected Property", "Dataset Average"],
-        var_name="Type",
-        value_name="Value"
-    )
-
+    compare_long = compare_df.melt(id_vars="Feature", value_vars=["Selected Property", "Dataset Average"], var_name="Type", value_name="Value")
     feature_fig = px.bar(
         compare_long,
         x="Feature",
@@ -757,48 +1045,20 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
         title=f"Property Feature Comparison: {selected_row['Address']}",
         labels={"Value": "Value"}
     )
-    feature_fig.update_layout(
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        margin=dict(l=10, r=10, t=50, b=10),
-        title_font_size=20
-    )
-
-    # -----------------------------
-    # Chart 3: Selected property price context
-    # -----------------------------
-    neighborhood_df = data[data["Neighborhood"] == selected_row["Neighborhood"]]
+    feature_fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), title_font_size=20, transition={"duration": 450, "easing": "cubic-in-out"})
 
     price_compare_df = pd.DataFrame({
-        "Metric": [
-            "Listed Price",
-            "Predicted Price",
-            "Neighborhood Avg",
-            "Dataset Avg"
-        ],
+        "Metric": ["Listed Price", "AI Price Estimate", "Neighborhood Avg", "Dataset Avg"],
         "Price": [
             selected_row["ListedPrice"],
             selected_row["PredictedPrice"],
-            neighborhood_df["ListedPrice"].mean(),
+            data[data["Neighborhood"] == selected_row["Neighborhood"]]["ListedPrice"].mean(),
             data["ListedPrice"].mean()
         ]
     })
-
-    trend_fig = px.bar(
-        price_compare_df,
-        x="Metric",
-        y="Price",
-        title=f"Selected Property Price Context: {selected_row['Address']}",
-        text="Price"
-    )
+    trend_fig = px.bar(price_compare_df, x="Metric", y="Price", title=f"Selected Property Price Context: {selected_row['Address']}", text="Price")
     trend_fig.update_traces(texttemplate="$%{y:,.0f}", textposition="outside")
-    trend_fig.update_layout(
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        margin=dict(l=10, r=10, t=50, b=10),
-        title_font_size=20,
-        showlegend=False
-    )
+    trend_fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), title_font_size=20, showlegend=False, transition={"duration": 450, "easing": "cubic-in-out"})
 
     return stats, map_fig, cards, scatter_fig, feature_fig, trend_fig
 
@@ -814,25 +1074,22 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
     Input("property-type-store", "data"),
 )
 def render_property_insights(selected_id, neighborhood, bedrooms, property_type):
-    filtered = data.copy()
-
-    if neighborhood != "ALL":
-        filtered = filtered[filtered["Neighborhood"] == neighborhood]
-    if bedrooms != -1:
-        filtered = filtered[filtered["Bedrooms"] == bedrooms]
-    if property_type != "ALL":
-        filtered = filtered[filtered["PropertyType"] == property_type]
-
-    if filtered.empty:
-        filtered = data.copy()
+    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
 
     if selected_id is None:
+        top = filtered.iloc[0]
         return html.Div(
             [
-                html.H3("Property Insights", style={"marginBottom": "8px", "color": "#0f172a"}),
-                html.P(
-                    "Click a property on the map, scatter plot, or the listing cards on the right to see specific insights.",
-                    style={"color": "#64748b", "fontSize": "15px"}
+                html.Div("Property Insights", style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a"}),
+                html.Div("Choose a home to see detailed pricing insight and comparison.", style={"color": "#64748b", "fontSize": "15px", "marginTop": "6px"}),
+                html.Div(
+                    [
+                        make_mini_metric("Preview Home", top["Address"], f"{top['Neighborhood']} • {display_property_type(top['PropertyType'])}"),
+                        make_mini_metric("Listed Price", money(top["ListedPrice"])),
+                        make_mini_metric("AI Price Estimate", money(top["PredictedPrice"])),
+                        make_mini_metric("Pricing Label", top["PricingLabel"]),
+                    ],
+                    style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(150px, 1fr))", "gap": "14px", "marginTop": "18px"}
                 )
             ]
         )
@@ -842,45 +1099,14 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
         return html.Div("Selected property not found.")
 
     row = row_df.iloc[0]
-
     neighborhood_df = data[data["Neighborhood"] == row["Neighborhood"]]
-
     avg_price = data["ListedPrice"].mean()
     avg_sqft = data["GrLivArea"].mean()
     avg_quality = data["OverallQual"].mean()
-    avg_age = (data["YrSold"] - data["YearBuilt"]).mean()
-
+    avg_age = data["Age"].mean()
     neigh_avg_price = neighborhood_df["ListedPrice"].mean()
-    neigh_avg_sqft = neighborhood_df["GrLivArea"].mean()
-
-    prop_age = row["YrSold"] - row["YearBuilt"]
     gap_pct = row["GapPct"] * 100
-
-    reasons = []
-
-    if row["GrLivArea"] > neigh_avg_sqft:
-        reasons.append("This home has above-average living area for its neighborhood.")
-    else:
-        reasons.append("This home is smaller than the neighborhood average, which may reduce value.")
-
-    if row["OverallQual"] > avg_quality:
-        reasons.append("Its overall quality score is above the dataset average.")
-    elif row["OverallQual"] < avg_quality:
-        reasons.append("Its overall quality score is below the dataset average.")
-    else:
-        reasons.append("Its overall quality score is close to the dataset average.")
-
-    if prop_age > avg_age:
-        reasons.append("The property is older than the average home in the dataset.")
-    else:
-        reasons.append("The property is newer than the average home in the dataset.")
-
-    if gap_pct > 8:
-        reasons.append("The listed price is noticeably above the model-estimated fair price.")
-    elif gap_pct < -8:
-        reasons.append("The listed price is below the model-estimated fair price.")
-    else:
-        reasons.append("The listed price is close to the model-estimated fair price.")
+    reasons = build_explanation(row)
 
     return html.Div(
         [
@@ -888,22 +1114,20 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
                 [
                     html.Div(
                         [
-                            html.H2(row["Address"], style={"margin": "0", "color": "#0f172a"}),
-                            html.Div(
-                                f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}",
-                                style={"color": "#64748b", "marginTop": "4px"}
-                            )
+                            html.Div(row["Address"], style={"margin": "0", "color": "#0f172a", "fontSize": "28px", "fontWeight": "900"}),
+                            html.Div(f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}", style={"color": "#64748b", "marginTop": "4px", "fontSize": "15px"})
                         ]
                     ),
                     html.Div(
                         row["PricingLabel"],
                         style={
-                            "background": label_color(row["PricingLabel"]),
-                            "color": "white",
-                            "padding": "8px 14px",
+                            "background": label_bg(row["PricingLabel"]),
+                            "color": label_color(row["PricingLabel"]),
+                            "padding": "9px 14px",
                             "borderRadius": "999px",
-                            "fontWeight": "700",
-                            "height": "fit-content"
+                            "fontWeight": "800",
+                            "height": "fit-content",
+                            "border": f"1px solid {label_color(row['PricingLabel'])}22"
                         }
                     )
                 ],
@@ -912,67 +1136,82 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
 
             html.Div(
                 [
-                    html.Div([
-                        html.Div("Listed Price", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(money(row["ListedPrice"]), style={"fontSize": "26px", "fontWeight": "800"})
-                    ]),
-                    html.Div([
-                        html.Div("Predicted Price", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(money(row["PredictedPrice"]), style={"fontSize": "26px", "fontWeight": "800"})
-                    ]),
-                    html.Div([
-                        html.Div("Price Gap", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(f"{gap_pct:.1f}%", style={"fontSize": "26px", "fontWeight": "800"})
-                    ]),
+                    make_mini_metric("Listed Price", money(row["ListedPrice"])),
+                    make_mini_metric("AI Price Estimate", money(row["PredictedPrice"])),
+                    make_mini_metric("Price Gap", f"{gap_pct:.1f}%", "Listed vs predicted"),
+                    make_mini_metric("Neighborhood Avg", money(neigh_avg_price), f"Dataset avg: {money(avg_price)}"),
                 ],
-                style={"display": "flex", "gap": "36px", "flexWrap": "wrap", "marginBottom": "24px"}
+                style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(160px, 1fr))", "gap": "16px", "marginBottom": "24px"}
             ),
 
             html.Div(
                 [
-                    html.Div([
-                        html.Div("Living Area", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(f"{row['GrLivArea']:.0f} sq ft", style={"fontWeight": "700", "fontSize": "18px"}),
-                        html.Div(f"Dataset avg: {avg_sqft:.0f}", style={"fontSize": "13px", "color": "#64748b"})
-                    ], style={"padding": "14px", "background": "#f8fafc", "borderRadius": "16px"}),
-
-                    html.Div([
-                        html.Div("Overall Quality", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(f"{row['OverallQual']}", style={"fontWeight": "700", "fontSize": "18px"}),
-                        html.Div(f"Dataset avg: {avg_quality:.1f}", style={"fontSize": "13px", "color": "#64748b"})
-                    ], style={"padding": "14px", "background": "#f8fafc", "borderRadius": "16px"}),
-
-                    html.Div([
-                        html.Div("Age", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(f"{prop_age:.0f} years", style={"fontWeight": "700", "fontSize": "18px"}),
-                        html.Div(f"Dataset avg: {avg_age:.1f}", style={"fontSize": "13px", "color": "#64748b"})
-                    ], style={"padding": "14px", "background": "#f8fafc", "borderRadius": "16px"}),
-
-                    html.Div([
-                        html.Div("Neighborhood Avg Price", style={"fontSize": "12px", "color": "#94a3b8"}),
-                        html.Div(money(neigh_avg_price), style={"fontWeight": "700", "fontSize": "18px"}),
-                        html.Div(f"Dataset avg: {money(avg_price)}", style={"fontSize": "13px", "color": "#64748b"})
-                    ], style={"padding": "14px", "background": "#f8fafc", "borderRadius": "16px"}),
-                ],
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": "repeat(4, minmax(160px, 1fr))",
-                    "gap": "16px",
-                    "marginBottom": "24px"
-                }
-            ),
-
-            html.Div(
-                [
-                    html.H4("Why this property is labeled this way", style={"marginBottom": "10px", "color": "#0f172a"}),
-                    html.Ul(
-                        [html.Li(reason, style={"marginBottom": "8px", "color": "#334155"}) for reason in reasons],
-                        style={"paddingLeft": "20px"}
+                    html.Div(
+                        [
+                            html.Div("Why this home is labeled this way", style={"fontSize": "20px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "12px", "textAlign": "center"}),
+                            html.Div(
+                                [
+                                    html.Div(
+                                        [
+                                            html.Div(f"0{i+1}", style={"fontSize": "14px", "fontWeight": "900", "color": "#1e40af", "marginBottom": "6px", "display": "inline-block", "marginRight": "10px"}),
+                                            html.Div(reason, style={"color": "#334155", "lineHeight": "1.6", "fontSize": "15px", "display": "inline"})
+                                        ],
+                                        style={
+                                            "marginBottom": "16px",
+                                            "textAlign": "left"
+                                        }
+                                    ) for i, reason in enumerate(reasons)
+                                ],
+                                style={"maxWidth": "860px", "margin": "0 auto"}
+                            )
+                        ],
+                        style={"marginBottom": "26px"}
+                    ),
+                    html.Div(
+                        [
+                            html.Div("Property Breakdown", style={"fontSize": "18px", "fontWeight": "800", "color": "#0f172a", "marginBottom": "12px", "textAlign": "center"}),
+                            html.Div(
+                                [
+                                    make_mini_metric("Living Area", f"{row['GrLivArea']:.0f} sq ft", f"Dataset avg: {avg_sqft:.0f}"),
+                                    make_mini_metric("Overall Quality", f"{row['OverallQual']}", f"Dataset avg: {avg_quality:.1f}"),
+                                    make_mini_metric("Age", f"{row['Age']:.0f} years", f"Dataset avg: {avg_age:.1f}"),
+                                ],
+                                style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(150px, 1fr))", "gap": "14px", "maxWidth": "900px", "margin": "0 auto"}
+                            )
+                        ]
                     )
-                ]
+                ],
+                style={"display": "block"}
             )
         ]
     )
+
+
+# Real-time AI Insights Callback - Auto-generates insights when properties are selected
+@app.callback(
+    Output("chat-history-store", "data", allow_duplicate=True),
+    Output("chat-messages", "children", allow_duplicate=True),
+    Input("selected-property-store", "data"),
+    State("chat-history-store", "data"),
+    State("neighborhood-filter", "value"),
+    State("bedroom-filter", "value"),
+    State("property-type-store", "data"),
+    prevent_initial_call=True
+)
+def auto_generate_insights(selected_id, history, neighborhood, bedrooms, property_type):
+    """Automatically generate AI insights when property is selected"""
+    if selected_id is None or selected_id not in data["Id"].values:
+        return dash.no_update, dash.no_update
+    
+    history = history or []
+    insights = generate_ai_insights(selected_id, neighborhood, bedrooms, property_type)
+    if not insights:
+        return dash.no_update, dash.no_update
+    
+    insight_text = " ".join(insights)
+    history = history + [{"role": "assistant", "text": f"🤖 Real-time: {insight_text}"}]
+    rendered = [make_chat_message(msg["role"], msg["text"]) for msg in history]
+    return history, rendered
 
 
 if __name__ == "__main__":
