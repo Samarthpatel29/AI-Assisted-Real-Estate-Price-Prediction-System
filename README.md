@@ -40,107 +40,66 @@ and labeling properties as:
 
 ## Project Structure
 
-- `app.py`  
-  Interactive Dash dashboard with AI-powered pricing assistant  
-
-- `house_price_prediction.ipynb`  
-  Notebook for predicting house prices  
-
-- `Time on market prediction.ipynb`  
-  Notebook for estimating time on market  
-
-- `train.csv`, `test.csv`  
-  Dataset files  
-
-- `submission.csv`  
-  Predicted house prices  
-
-- `time_on_market_submission.csv`  
-  Predicted time on market  
-
-- `data_description.txt`  
-  Dataset feature descriptions  
+- app.py → Interactive dashboard  
+- house_price_prediction.ipynb → Price prediction model  
+- Time on market prediction.ipynb → Time on market model  
+- train.csv, test.csv → Dataset files  
+- submission.csv → Predicted prices  
+- time_on_market_submission.csv → Time predictions  
+- data_description.txt → Feature descriptions  
 
 ---
 
 ## House Price Prediction
 
-### Overview
-This notebook builds regression models to estimate house prices based on property features.
+Overview: Builds regression models to estimate house prices.
 
-### Steps
-1. Data preprocessing  
-   - Handle missing values  
-   - Encode categorical variables  
-   - Scale numerical features  
+Steps:
+- Data preprocessing (missing values, encoding, scaling)  
+- Modeling (XGBoost, LightGBM, CatBoost)  
+- Evaluation (RMSE, R²)  
 
-2. Modeling  
-   - XGBoost  
-   - LightGBM  
-   - CatBoost  
-   - Ensemble averaging  
-
-3. Evaluation  
-   - RMSE  
-   - R² Score  
-
-### Output
-Predictions are saved to:
+Output:
 submission.csv
 
 ---
 
 ## Time on Market Prediction
 
-### Overview
-This notebook estimates how long a property will stay on the market.
+Overview: Estimates how long a property stays on the market.
 
-### Important Note
-The dataset does not include a real "time on market" column, so a proxy variable is created:
-
+Note:
 TimeOnMarket = (YrSold - YearBuilt) * 12 + MoSold
 
-### Steps
+Steps:
 - Feature selection  
 - Data preprocessing  
 - Random Forest model  
 
-### Output
-Saved as:
+Output:
 time_on_market_submission.csv
 
 ---
 
 ## Real Estate Dashboard
 
-### Overview
-The app.py file builds an interactive dashboard using Dash and Plotly.
+Overview: app.py builds an interactive dashboard using Dash.
 
-### Features
-- Interactive property map  
-- Clickable listing cards  
-- Dynamic filters (neighborhood, bedrooms, property type)  
+Features:
+- Interactive map  
+- Listing cards  
+- Filters (neighborhood, bedrooms, type)  
 - Property insight panel  
-- Pricing classification (Overpriced / Fair / Undervalued)  
-- Real-time statistics  
-- Feature comparison charts  
-- Price comparison visualizations  
-
-### Visualizations
-- Map View  
-- Listing Cards  
-- Scatter Plot (Living Area vs Price)  
-- Feature Comparison Chart  
-- Price Comparison Chart  
+- Pricing labels (Overpriced / Fair / Undervalued)  
+- Charts and comparisons  
 
 ---
 
 ## AI-Powered Pricing Assistant (Chatbot)
 
-### Overview
-The dashboard includes a simple rule-based assistant for answering questions about properties.
+Overview: Simple rule-based assistant.
 
-### Capabilities
+Capabilities:
 - Price analysis  
 - Market comparison  
 - Deal detection  
@@ -150,71 +109,63 @@ The dashboard includes a simple rule-based assistant for answering questions abo
 
 ## Data Description
 
-The dataset contains housing features such as:
-
+Key features:
 - GrLivArea → Living area  
-- OverallQual → Overall quality  
-- YearBuilt → Construction year  
+- OverallQual → Quality  
+- YearBuilt → Build year  
 - Neighborhood → Location  
-- GarageCars → Garage size  
-- SalePrice → Target variable  
+- SalePrice → Target  
 
-For full details, see:
+See:
 data_description.txt
 
 ---
 
 ## How to Run
 
-Follow these steps in order to run the full project.
+Follow these steps in order:
 
-1. Open the project  
-Open the project folder in VS Code  
+1. Open project in VS Code
 
-2. Create virtual environment (first time only)  
-python -m venv .venv  
+2. Create virtual environment
+python -m venv .venv
 
-3. Activate environment  
-.\.venv\Scripts\Activate.ps1  
+3. Activate environment
+.\.venv\Scripts\Activate.ps1
 
-4. Install dependencies  
-pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost  
+4. Install dependencies
+pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost
 
-5. Replace file path for datasets with your own local path for wherever its mentioned
-   
-7. Run Jupyter Notebook  
-python -m notebook  
+5. Change file paths for datasets and then Run notebooks
+python -m notebook
 
-8. Run notebooks (IMPORTANT)  
-- house_price_prediction.ipynb → Run All → creates submission.csv  
-- Time on market prediction.ipynb → Run All → creates time_on_market_submission.csv  
+Run:
+- house_price_prediction.ipynb
+- Time on market prediction.ipynb
 
-These files are required for the dashboard.
+6. Run dashboard
+python app.py
 
-8. Run dashboard  
-python app.py  
-
-9. Open in browser  
-http://127.0.0.1:8050  
+7. Open browser
+http://127.0.0.1:8050
 
 ---
 
 ## How to Use
 
-### Filtering & Selection
-- Select a neighborhood  
-- Choose number of bedrooms  
-- Click a property type button  
+Filtering:
+- Select neighborhood  
+- Choose bedrooms  
+- Pick property type  
 
-### Selecting a Property
-Click on:
-- Map point  
-- Scatter plot  
-- Listing card  
+Selecting:
+- Click map point  
+- Click scatter plot  
+- Click listing card  
 
-### Understanding Pricing Labels
-- Overpriced → more than 8% above predicted price  
-- Fairly priced → within 8% of predicted price  
-- Undervalued → more than 8% below predicted price  
+Labels:
+- Overpriced → >8% above predicted  
+- Fair → within 8%  
+- Undervalued → >8% below predicted  
 
 ---
