@@ -125,47 +125,33 @@ data_description.txt
 
 Follow these steps in order:
 
-1. Open project in VS Code
+### 1. Open project in VS Code
 
-2. Create virtual environment
+---
+
+### 2. Create virtual environment
+
+```powershell
 python -m venv .venv
-
-3. Activate environment
+```
+### 3. Activate environment
+```powershell
 .\.venv\Scripts\Activate.ps1
-
-4. Install dependencies
+```
+### 4. Install dependencies
+```powershell
 pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost
-
-5. Change file paths for datasets and then Run notebooks
-python -m notebook
-
+```
+### 5. Change the datasets file path with your local path where you have them saved, and then 
 Run:
-- house_price_prediction.ipynb
-- Time on market prediction.ipynb
+house_price_prediction.ipynb &
+Time on market prediction.ipynb
 
-6. Run dashboard
+### 6. Run Dashboard
+```powershell
 python app.py
-
-7. Open browser
-http://127.0.0.1:8050
-
----
-
-## How to Use
-
-Filtering:
-- Select neighborhood  
-- Choose bedrooms  
-- Pick property type  
-
-Selecting:
-- Click map point  
-- Click scatter plot  
-- Click listing card  
-
-Labels:
-- Overpriced → >8% above predicted  
-- Fair → within 8%  
-- Undervalued → >8% below predicted  
-
----
+```
+### 7. Open browser
+```powershell
+http://127.0.0.1:8050/
+```
