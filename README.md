@@ -180,19 +180,21 @@ python -m venv .venv
 4. Install dependencies  
 pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost  
 
-5. Run Jupyter Notebook  
+5. Replace file path for datasets with your own local path for wherever its mentioned
+   
+7. Run Jupyter Notebook  
 python -m notebook  
 
-6. Run notebooks (IMPORTANT)  
+8. Run notebooks (IMPORTANT)  
 - house_price_prediction.ipynb → Run All → creates submission.csv  
 - Time on market prediction.ipynb → Run All → creates time_on_market_submission.csv  
 
 These files are required for the dashboard.
 
-7. Run dashboard  
+8. Run dashboard  
 python app.py  
 
-8. Open in browser  
+9. Open in browser  
 http://127.0.0.1:8050  
 
 ---
