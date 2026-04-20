@@ -14,10 +14,20 @@ data = pd.read_csv("train.csv")
 
 pred_path = "submission.csv"
 if os.path.exists(pred_path):
-    pred = pd.read_csv(pred_path).rename(columns={"SalePrice": "PredictedPrice"})
-    data = data.merge(pred[["Id", "PredictedPrice"]], on="Id", how="left")
+    try:
+        pred = pd.read_csv(pred_path)
+        if {"Id", "SalePrice"}.issubset(pred.columns):
+            pred["PredictedPrice"] = pd.to_numeric(pred["SalePrice"], errors="coerce")
+            data = data.merge(pred[["Id", "PredictedPrice"]], on="Id", how="left")
+        else:
+            data["PredictedPrice"] = np.nan
+    except Exception:
+        data["PredictedPrice"] = np.nan
 else:
     data["PredictedPrice"] = np.nan
+
+# Normalize any merged prediction values and ensure numeric fallback behavior.
+data["PredictedPrice"] = pd.to_numeric(data["PredictedPrice"], errors="coerce")
 
 if data["PredictedPrice"].isna().all():
     quality_adj = (data["OverallQual"].fillna(5) - 5) * 0.025
@@ -31,6 +41,8 @@ if data["PredictedPrice"].isna().all():
     data["PredictedPrice"] = (data["SalePrice"] * demo_factor).clip(lower=50000)
 else:
     data["PredictedPrice"] = data["PredictedPrice"].fillna(data["SalePrice"] * 0.98)
+
+data["PredictedPrice"] = pd.to_numeric(data["PredictedPrice"], errors="coerce")
 
 data["ListedPrice"] = data["SalePrice"]
 data["PriceGap"] = data["ListedPrice"] - data["PredictedPrice"]
