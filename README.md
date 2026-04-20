@@ -126,7 +126,7 @@ data_description.txt
 Follow these steps in order:
 
 ### 1. Open project in VS Code
-
+- Download all the code files, make a folder and then open in vscode
 ---
 
 ### 2. Create virtual environment
