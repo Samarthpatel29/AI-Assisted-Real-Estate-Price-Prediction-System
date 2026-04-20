@@ -136,7 +136,7 @@ python -m venv .venv
 ```
 ### 3. Activate environment
 ```powershell
-.\.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1   
 ```
 ### 4. Install dependencies
 ```powershell
