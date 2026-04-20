@@ -201,76 +201,54 @@ data_description.txt
 
 ---
 
-## How to Run
+🚀 How to Run (Simple Steps)
 
-### 1. Clone the repository
+Follow these steps in order to run the full project.
 
-```bash
-git clone <your-repo-link>
-cd <your-repo-folder>
-```
+1. Open the project
 
----
+Open the project folder in VS Code.
 
-### 2. Fix file paths (IMPORTANT)
-
-If your code contains paths like:
-
-```python
-C:/Users/yourname/...
-```
-
-Replace them with:
-
-```python
-train.csv
-test.csv
-submission.csv
-time_on_market_submission.csv
-```
-
----
-
-### 3. Create virtual environment (PowerShell)
-
-```powershell
+2. Create virtual environment (first time only)
 python -m venv .venv
+3. Activate environment
 .\.venv\Scripts\Activate.ps1
-```
 
----
+You should see:
 
-### 4. Install dependencies
+(.venv)
+4. Install dependencies
+pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost
+5. Run Jupyter Notebook
+python -m notebook
 
-```powershell
-.\.venv\Scripts\python.exe -m pip install pandas numpy scikit-learn dash plotly notebook xgboost lightgbm catboost
-```
+This will open a browser window.
 
----
+6. Run notebooks (IMPORTANT)
 
-### 5. Run notebooks
+Run these in order:
 
-```powershell
-.\.venv\Scripts\python.exe -m notebook
-```
+house_price_prediction.ipynb
+Click Run All
+This creates:
+submission.csv
+Time on market prediction.ipynb
+Click Run All
+This creates:
+time_on_market_submission.csv
 
-Run:
-- `house_price_prediction.ipynb`
-- `Time on market prediction.ipynb`
+⚠️ These files are required for the dashboard.
 
----
+7. Run the dashboard
 
-### 6. Run dashboard
+Back in VS Code terminal:
 
-```powershell
-.\.venv\Scripts\python.exe app.py
-```
+python app.py
+8. Open in browser
 
-Open in browser:
+Go to:
 
-```
 http://127.0.0.1:8050
-```
 
 ---
 
