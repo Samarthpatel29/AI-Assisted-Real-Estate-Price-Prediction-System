@@ -6,50 +6,114 @@ import dash
 from dash import dcc, html, Input, Output, State
 from dash.dependencies import ALL
 import plotly.express as px
+import plotly.graph_objects as go
 
 # -----------------------------
-# Load and prepare data
+# Load and prepare data (King County / Seattle home sales)
 # -----------------------------
-data = pd.read_csv("train.csv")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+raw = pd.read_csv(os.path.join(BASE_DIR, "kc_house_data.csv"))
 
-pred_path = "submission.csv"
-if os.path.exists(pred_path):
-    try:
-        pred = pd.read_csv(pred_path)
-        if {"Id", "SalePrice"}.issubset(pred.columns):
-            pred["PredictedPrice"] = pd.to_numeric(pred["SalePrice"], errors="coerce")
-            data = data.merge(pred[["Id", "PredictedPrice"]], on="Id", how="left")
-        else:
-            data["PredictedPrice"] = np.nan
-    except Exception:
-        data["PredictedPrice"] = np.nan
-else:
-    data["PredictedPrice"] = np.nan
+# Clean known quirks of this dataset: NaNs in waterfront/view/yr_renovated,
+# '?' strings in sqft_basement
+raw["waterfront"] = raw["waterfront"].fillna(0).astype(int)
+raw["view"] = raw["view"].fillna(0).astype(int)
+raw["yr_renovated"] = raw["yr_renovated"].fillna(0).astype(int)
+raw["sqft_basement"] = pd.to_numeric(raw["sqft_basement"], errors="coerce").fillna(0)
 
-# Normalize any merged prediction values and ensure numeric fallback behavior.
-data["PredictedPrice"] = pd.to_numeric(data["PredictedPrice"], errors="coerce")
+# Keep the most recent sale per home id
+raw["date"] = pd.to_datetime(raw["date"])
+raw = raw.sort_values("date").drop_duplicates("id", keep="last").reset_index(drop=True)
+data = raw.copy()
+data["Id"] = data.index.astype(int)
 
-if data["PredictedPrice"].isna().all():
-    quality_adj = (data["OverallQual"].fillna(5) - 5) * 0.025
-    area_adj = (
-        (data["GrLivArea"].fillna(data["GrLivArea"].median()) - data["GrLivArea"].median())
-        / data["GrLivArea"].median()
-    ) * 0.06
-    age = data["YrSold"].fillna(2010) - data["YearBuilt"].fillna(data["YearBuilt"].median())
-    age_adj = np.where(age > 50, -0.04, np.where(age < 10, 0.03, 0.0))
-    demo_factor = 1 + quality_adj + area_adj + age_adj
-    data["PredictedPrice"] = (data["SalePrice"] * demo_factor).clip(lower=50000)
-else:
-    data["PredictedPrice"] = data["PredictedPrice"].fillna(data["SalePrice"] * 0.98)
+ZIP_CITY = {
+    98001: "Auburn", 98002: "Auburn", 98003: "Federal Way", 98004: "Bellevue",
+    98005: "Bellevue", 98006: "Bellevue", 98007: "Bellevue", 98008: "Bellevue",
+    98010: "Black Diamond", 98011: "Bothell", 98014: "Carnation", 98019: "Duvall",
+    98022: "Enumclaw", 98023: "Federal Way", 98024: "Fall City", 98027: "Issaquah",
+    98028: "Kenmore", 98029: "Issaquah", 98030: "Kent", 98031: "Kent",
+    98032: "Kent", 98033: "Kirkland", 98034: "Kirkland", 98038: "Maple Valley",
+    98039: "Medina", 98040: "Mercer Island", 98042: "Kent", 98045: "North Bend",
+    98052: "Redmond", 98053: "Redmond", 98055: "Renton", 98056: "Renton",
+    98058: "Renton", 98059: "Renton", 98065: "Snoqualmie", 98070: "Vashon Island",
+    98072: "Woodinville", 98074: "Sammamish", 98075: "Sammamish", 98077: "Woodinville",
+    98092: "Auburn", 98146: "Burien", 98148: "SeaTac", 98155: "Shoreline",
+    98166: "Burien", 98168: "Tukwila", 98177: "Shoreline", 98188: "SeaTac",
+    98198: "Des Moines",
+}
 
-data["PredictedPrice"] = pd.to_numeric(data["PredictedPrice"], errors="coerce")
 
-data["ListedPrice"] = data["SalePrice"]
+def zip_to_city(z):
+    z = int(z)
+    if z in ZIP_CITY:
+        return ZIP_CITY[z]
+    if 98100 <= z <= 98199:
+        return "Seattle"
+    return f"ZIP {z}"
+
+
+data["City"] = data["zipcode"].apply(zip_to_city)
+data["Age"] = 2015 - data["yr_built"]
+data["Renovated"] = (data["yr_renovated"] > 0).astype(int)
+data["Bedrooms"] = data["bedrooms"].clip(upper=8).astype(int)
+
+# -----------------------------
+# Hedonic pricing model: ridge regression on log(price)
+# with zipcode fixed effects — fit at startup with pure numpy
+# -----------------------------
+def build_features(df, zip_categories):
+    numeric = np.column_stack([
+        np.log(df["sqft_living"].clip(lower=200)),
+        np.log(df["sqft_lot"].clip(lower=400)),
+        df["bedrooms"].clip(upper=8),
+        df["bathrooms"],
+        df["floors"],
+        df["waterfront"],
+        df["view"],
+        df["condition"],
+        df["grade"],
+        2015 - df["yr_built"],
+        (df["yr_renovated"] > 0).astype(int),
+        df["lat"],
+        df["long"],
+    ])
+    zips = pd.Categorical(df["zipcode"], categories=zip_categories)
+    zip_dummies = pd.get_dummies(zips, drop_first=True).to_numpy(dtype=float)
+    ones = np.ones((len(df), 1))
+    return np.hstack([ones, numeric, zip_dummies])
+
+
+ZIP_CATEGORIES = sorted(data["zipcode"].unique())
+X = build_features(data, ZIP_CATEGORIES)
+y = np.log(data["price"].to_numpy())
+
+lam = 1.0
+XtX = X.T @ X + lam * np.eye(X.shape[1])
+beta = np.linalg.solve(XtX, X.T @ y)
+
+log_pred = X @ beta
+residuals = y - log_pred
+smearing = float(np.mean(np.exp(residuals)))  # Duan smearing for unbiased back-transform
+data["PredictedPrice"] = np.exp(log_pred) * smearing
+
+r2 = 1 - np.sum(residuals ** 2) / np.sum((y - y.mean()) ** 2)
+MODEL_NOTE = f"Ridge hedonic model • R² = {r2:.2f} (log price)"
+
+
+def predict_price(row_like):
+    """Re-predict price for a single (possibly modified) property dict/Series."""
+    df = pd.DataFrame([row_like])
+    xv = build_features(df, ZIP_CATEGORIES)
+    return float(np.exp(xv @ beta)[0] * smearing)
+
+
+# -----------------------------
+# Derived analytics
+# -----------------------------
+data["ListedPrice"] = data["price"]
 data["PriceGap"] = data["ListedPrice"] - data["PredictedPrice"]
 data["GapPct"] = data["PriceGap"] / data["PredictedPrice"]
-data["PropertyType"] = data["BldgType"].fillna("House")
-data["Bedrooms"] = data["BedroomAbvGr"].fillna(0).astype(int)
-data["Age"] = data["YrSold"].fillna(2010) - data["YearBuilt"].fillna(data["YearBuilt"].median())
 
 
 def pricing_label(x):
@@ -58,6 +122,70 @@ def pricing_label(x):
     elif x < -0.08:
         return "Undervalued"
     return "Fairly priced"
+
+
+data["PricingLabel"] = data["GapPct"].apply(pricing_label)
+
+# Deal Score (0-100): value gap + quality + appeal
+value_rank = (-data["GapPct"]).rank(pct=True)
+quality_rank = (data["grade"].rank(pct=True) + data["condition"].rank(pct=True)) / 2
+appeal = (data["view"] / 4) * 0.6 + data["waterfront"] * 0.4
+data["DealScore"] = (value_rank * 55 + quality_rank * 25 + appeal * 20).clip(1, 99).round(0).astype(int)
+
+# Estimated days on market: overpricing slows sales, quality speeds them up
+data["EstDOM"] = (
+    28 * np.exp(2.2 * data["GapPct"]) - (data["grade"] - 7) * 2
+).clip(5, 120).round(0).astype(int)
+
+# Investor metrics (rough 2014-15 Seattle rent heuristic)
+data["RentEst"] = (0.9 * data["sqft_living"] + 340 * data["bathrooms"] + 220).clip(900, 9000)
+data["GrossYield"] = (data["RentEst"] * 12 / data["ListedPrice"] * 100).round(1)
+
+RATE, YEARS, DOWN = 0.065, 30, 0.20
+_r = RATE / 12
+_n = YEARS * 12
+data["Mortgage"] = (data["ListedPrice"] * (1 - DOWN)) * (_r * (1 + _r) ** _n) / ((1 + _r) ** _n - 1)
+
+data["PricePerSqft"] = data["ListedPrice"] / data["sqft_living"]
+
+street_names = [
+    "Alder St", "Rainier Ave", "Cascade Dr", "Pine St", "Madrona Ln",
+    "Elliott Ave", "Union St", "Magnolia Blvd", "Lakeview Rd", "Greenwood Ave"
+]
+data["Address"] = data.apply(
+    lambda r: f"{100 + int(r['Id']) % 9800} {street_names[int(r['Id']) % len(street_names)]}",
+    axis=1
+)
+
+GRADE_TIERS = {
+    "ALL": "All Homes",
+    "starter": "Starter",
+    "standard": "Standard",
+    "premium": "Premium",
+    "luxury": "Luxury",
+    "waterfront": "Waterfront",
+}
+
+
+def tier_mask(df, tier):
+    if tier == "starter":
+        return df["grade"] <= 6
+    if tier == "standard":
+        return df["grade"] == 7
+    if tier == "premium":
+        return df["grade"].between(8, 9)
+    if tier == "luxury":
+        return df["grade"] >= 10
+    if tier == "waterfront":
+        return df["waterfront"] == 1
+    return pd.Series(True, index=df.index)
+
+
+CITIES = ["ALL"] + sorted(data["City"].unique().tolist())
+
+# Monthly market trend (real sale dates: May 2014 - May 2015)
+data["SaleMonth"] = data["date"].dt.to_period("M").astype(str)
+county_trend = data.groupby("SaleMonth")["ListedPrice"].median()
 
 
 def label_color(label):
@@ -76,56 +204,19 @@ def label_bg(label):
     }.get(label, "rgba(100,116,139,0.12)")
 
 
-data["PricingLabel"] = data["GapPct"].apply(pricing_label)
+def score_color(score):
+    if score >= 70:
+        return "#16a34a"
+    if score >= 45:
+        return "#f59e0b"
+    return "#ef4444"
 
-PROPERTY_LABELS = {
-    "ALL": "All Homes",
-    "1Fam": "Single Family",
-    "2fmCon": "Two-Family",
-    "Duplex": "Duplex",
-    "Twnhs": "Townhouse",
-    "TwnhsE": "End-Unit Townhome"
-}
-
-lat_map = {
-    'CollgCr': 42.025, 'Veenker': 42.030, 'Crawfor': 42.022, 'NoRidge': 42.050,
-    'Mitchel': 42.018, 'Somerst': 42.031, 'NWAmes': 42.040, 'OldTown': 42.016,
-    'BrkSide': 42.012, 'Sawyer': 42.025, 'IDOTRR': 42.007, 'MeadowV': 42.010,
-    'Edwards': 42.017, 'Timber': 42.042, 'Gilbert': 42.080, 'StoneBr': 42.055,
-    'ClearCr': 42.045, 'NPkVill': 42.036, 'Blmngtn': 42.062, 'Blueste': 42.065,
-    'SawyerW': 42.028, 'SWISU': 42.013, 'NridgHt': 42.054, 'NAmes': 42.053
-}
-lon_map = {
-    'CollgCr': -93.655, 'Veenker': -93.650, 'Crawfor': -93.670, 'NoRidge': -93.635,
-    'Mitchel': -93.685, 'Somerst': -93.645, 'NWAmes': -93.680, 'OldTown': -93.630,
-    'BrkSide': -93.620, 'Sawyer': -93.625, 'IDOTRR': -93.610, 'MeadowV': -93.600,
-    'Edwards': -93.640, 'Timber': -93.690, 'Gilbert': -93.750, 'StoneBr': -93.630,
-    'ClearCr': -93.670, 'NPkVill': -93.665, 'Blmngtn': -93.690, 'Blueste': -93.700,
-    'SawyerW': -93.645, 'SWISU': -93.620, 'NridgHt': -93.640, 'NAmes': -93.675
-}
-data["Latitude"] = data["Neighborhood"].map(lat_map).fillna(42.03)
-data["Longitude"] = data["Neighborhood"].map(lon_map).fillna(-93.65)
-
-street_names = [
-    "Main St", "Oak Ave", "Pine St", "Maple Dr", "Cedar Ln",
-    "Elm St", "Park Ave", "Hill Dr", "Lakeview Rd", "Sunset Blvd"
-]
-data["Address"] = data.apply(
-    lambda r: f"{100 + int(r['Id']) % 900} {street_names[int(r['Id']) % len(street_names)]}",
-    axis=1
-)
-
-PROPERTY_TYPES = ["ALL"] + sorted(data["PropertyType"].dropna().unique().tolist())
 
 # -----------------------------
 # Helpers
 # -----------------------------
 def money(x):
     return f"${x:,.0f}"
-
-
-def display_property_type(value):
-    return PROPERTY_LABELS.get(value, value)
 
 
 def glass_card(radius="24px", padding="20px"):
@@ -156,7 +247,6 @@ def make_stat_card(title, value, subtitle="", accent="#3b82f6"):
             ),
             html.Div(title, style={"fontSize": "13px", "color": "#64748b", "marginBottom": "6px", "fontWeight": "700"}),
             html.Div(value, style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a"}),
-
             html.Div(subtitle, style={"fontSize": "12px", "color": "#94a3b8", "marginTop": "4px"}),
         ],
         style={
@@ -185,6 +275,25 @@ def make_mini_metric(title, value, subtitle=""):
     )
 
 
+def deal_badge(score, size="normal"):
+    return html.Div(
+        [
+            html.Div(f"{score}", style={"fontSize": "20px" if size == "normal" else "30px", "fontWeight": "900", "lineHeight": "1"}),
+            html.Div("DEAL SCORE", style={"fontSize": "8px" if size == "normal" else "10px", "fontWeight": "800", "letterSpacing": "0.06em", "opacity": "0.85"}),
+        ],
+        style={
+            "background": f"linear-gradient(135deg, {score_color(score)}, {score_color(score)}cc)",
+            "color": "white",
+            "borderRadius": "16px",
+            "padding": "8px 10px" if size == "normal" else "12px 16px",
+            "textAlign": "center",
+            "boxShadow": f"0 8px 20px {score_color(score)}40",
+            "flexShrink": "0",
+            "height": "fit-content"
+        }
+    )
+
+
 def make_listing_card(row, selected_id=None):
     badge = row["PricingLabel"]
     badge_color = label_color(badge)
@@ -193,16 +302,20 @@ def make_listing_card(row, selected_id=None):
     return html.Button(
         [
             html.Div(
-                "🏡",
+                [
+                    html.Div("🏡" if row["waterfront"] == 0 else "🌊", style={"fontSize": "34px"}),
+                    deal_badge(row["DealScore"]),
+                ],
                 style={
-                    "width": "102px",
-                    "height": "102px",
+                    "width": "96px",
                     "borderRadius": "20px",
                     "background": "linear-gradient(135deg, #dbeafe 0%, #bfdbfe 50%, #ffffff 100%)",
                     "display": "flex",
+                    "flexDirection": "column",
                     "alignItems": "center",
                     "justifyContent": "center",
-                    "fontSize": "36px",
+                    "gap": "8px",
+                    "padding": "10px 6px",
                     "flexShrink": "0",
                     "boxShadow": "inset 0 1px 0 rgba(255,255,255,0.75)"
                 },
@@ -215,56 +328,44 @@ def make_listing_card(row, selected_id=None):
                                 [
                                     html.Div(
                                         row["Address"],
-                                        style={
-                                            "fontSize": "22px",
-                                            "fontWeight": "900",
-                                            "color": "#0f172a",
-                                            "lineHeight": "1.1"
-                                        }
+                                        style={"fontSize": "20px", "fontWeight": "900", "color": "#0f172a", "lineHeight": "1.1"}
                                     ),
                                     html.Div(
-                                        f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}",
-                                        style={
-                                            "fontSize": "14px",
-                                            "color": "#64748b",
-                                            "marginTop": "7px",
-                                            "fontWeight": "600"
-                                        }
+                                        f"{row['City']} • {int(row['Bedrooms'])} bed • {row['bathrooms']} bath • {int(row['sqft_living']):,} sq ft",
+                                        style={"fontSize": "13px", "color": "#64748b", "marginTop": "7px", "fontWeight": "600"}
                                     ),
                                 ],
                                 style={"flex": "1"}
                             ),
-                            html.Div(
-                                [
-                                    html.Span(
-                                        "Selected" if is_selected else badge,
-                                        style={
-                                            "background": label_bg(badge) if not is_selected else "rgba(59,130,246,0.14)",
-                                            "color": badge_color if not is_selected else "#1e40af",
-                                            "padding": "7px 12px",
-                                            "borderRadius": "999px",
-                                            "fontSize": "12px",
-                                            "fontWeight": "800",
-                                            "border": f"1px solid {badge_color}22" if not is_selected else "1px solid rgba(59,130,246,0.18)"
-                                        },
-                                    )
-                                ]
+                            html.Span(
+                                "Selected" if is_selected else badge,
+                                style={
+                                    "background": label_bg(badge) if not is_selected else "rgba(59,130,246,0.14)",
+                                    "color": badge_color if not is_selected else "#1e40af",
+                                    "padding": "7px 12px",
+                                    "borderRadius": "999px",
+                                    "fontSize": "12px",
+                                    "fontWeight": "800",
+                                    "border": f"1px solid {badge_color}22" if not is_selected else "1px solid rgba(59,130,246,0.18)",
+                                    "height": "fit-content"
+                                },
                             )
                         ],
                         style={"display": "flex", "justifyContent": "space-between", "gap": "12px", "alignItems": "flex-start"},
                     ),
                     html.Div(
                         [
-                            make_mini_metric("Listed Price", money(row["ListedPrice"])),
-                            make_mini_metric("AI Price Estimate", money(row["PredictedPrice"])),
+                            make_mini_metric("Listed", money(row["ListedPrice"])),
+                            make_mini_metric("AI Estimate", money(row["PredictedPrice"])),
+                            make_mini_metric("Est. Days on Mkt", f"{int(row['EstDOM'])} days"),
                         ],
-                        style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "12px", "marginTop": "16px"}
+                        style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "10px", "marginTop": "14px"}
                     )
                 ],
                 style={"flex": "1", "textAlign": "left"},
             ),
         ],
-        id={"type": "listing-card", "index": int(row["Id"])} ,
+        id={"type": "listing-card", "index": int(row["Id"])},
         n_clicks=0,
         className="listing-hover",
         style={
@@ -274,7 +375,6 @@ def make_listing_card(row, selected_id=None):
             "width": "100%",
             "background": "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.9) 100%)",
             "borderRadius": "24px",
-            "boxShadow": "0 12px 30px rgba(15, 23, 42, 0.08)",
             "border": "2px solid #3b82f6" if is_selected else "1px solid rgba(226,232,240,0.85)",
             "marginBottom": "16px",
             "cursor": "pointer",
@@ -289,13 +389,11 @@ def make_listing_card(row, selected_id=None):
     )
 
 
-def property_button(value, selected_value):
+def tier_button(value, selected_value):
     selected = value == selected_value
-    label = display_property_type(value)
-
     return html.Button(
-        label,
-        id={"type": "property-chip", "index": value},
+        GRADE_TIERS[value],
+        id={"type": "tier-chip", "index": value},
         n_clicks=0,
         style={
             "padding": "10px 12px",
@@ -308,7 +406,6 @@ def property_button(value, selected_value):
             "cursor": "pointer",
             "boxShadow": "0 10px 20px rgba(59,130,246,0.22)" if selected else "0 4px 12px rgba(15,23,42,0.04)",
             "transition": "all 0.2s ease",
-            "minWidth": "90px",
             "textAlign": "center",
             "width": "100%"
         },
@@ -318,41 +415,64 @@ def property_button(value, selected_value):
 
 def build_explanation(row):
     reasons = []
-    if row["GrLivArea"] >= data["GrLivArea"].median():
-        reasons.append("Larger living area supports a higher estimated value.")
+    zc = data[data["zipcode"] == row["zipcode"]]
+    ppsf_pct = (zc["PricePerSqft"] < row["PricePerSqft"]).mean() * 100
+    reasons.append(
+        f"At {money(row['PricePerSqft'])}/sq ft, this home is pricier than {ppsf_pct:.0f}% of homes in its ZIP code."
+    )
+    if row["grade"] >= 9:
+        reasons.append(f"Construction grade {int(row['grade'])}/13 is high-end, which lifts the model's estimate.")
+    elif row["grade"] <= 6:
+        reasons.append(f"Construction grade {int(row['grade'])}/13 is below average, which lowers the estimate.")
     else:
-        reasons.append("Smaller living area pulls the estimate down compared to many homes.")
-
-    if row["OverallQual"] >= data["OverallQual"].median():
-        reasons.append("Above-average quality rating helps the predicted price.")
+        reasons.append(f"Construction grade {int(row['grade'])}/13 is about average for the county.")
+    if row["waterfront"] == 1:
+        reasons.append("Waterfront location adds a large premium in the model.")
+    elif row["view"] >= 3:
+        reasons.append("A strong view rating adds a meaningful premium.")
+    elif row["Age"] <= 10:
+        reasons.append("Newer construction supports the estimated value.")
+    elif row["Age"] >= 70:
+        reasons.append("The home's age pulls the estimate down relative to newer stock.")
     else:
-        reasons.append("Below-average quality rating lowers the predicted price.")
-
-    if row["Age"] >= data["Age"].median():
-        reasons.append("The property is older, which can reduce price compared to newer homes.")
-    else:
-        reasons.append("The property is relatively newer, which supports value.")
-
+        reasons.append(f"Built in {int(row['yr_built'])}, the home is typical for its neighborhood.")
     if row["GapPct"] > 0.08:
-        reasons.append("The listed price is noticeably above the AI estimate.")
+        reasons.append(f"Listed {row['GapPct']*100:.0f}% above the AI estimate — the market may push back.")
     elif row["GapPct"] < -0.08:
-        reasons.append("The listed price is below the AI estimate, which may suggest a value opportunity.")
+        reasons.append(f"Listed {abs(row['GapPct'])*100:.0f}% below the AI estimate — a potential value opportunity.")
     else:
-        reasons.append("The listed price is close to the AI estimate.")
+        reasons.append("The listed price sits close to the AI estimate.")
     return reasons[:4]
 
 
-def get_filtered_data(neighborhood, bedrooms, property_type):
-    filtered = data.copy()
-    if neighborhood != "ALL":
-        filtered = filtered[filtered["Neighborhood"] == neighborhood]
+def get_filtered_data(city, bedrooms, tier):
+    filtered = data
+    if city != "ALL":
+        filtered = filtered[filtered["City"] == city]
     if bedrooms != -1:
         filtered = filtered[filtered["Bedrooms"] == bedrooms]
-    if property_type != "ALL":
-        filtered = filtered[filtered["PropertyType"] == property_type]
+    if tier != "ALL":
+        filtered = filtered[tier_mask(filtered, tier)]
     if filtered.empty:
-        filtered = data.head(10).copy()
+        filtered = data.head(10)
     return filtered
+
+
+def find_comps(row, k=4):
+    """Nearest comparable sales: same ZIP, similar size/grade/location."""
+    pool = data[(data["zipcode"] == row["zipcode"]) & (data["Id"] != row["Id"])]
+    if len(pool) < k:
+        pool = data[(data["City"] == row["City"]) & (data["Id"] != row["Id"])]
+    if pool.empty:
+        return pool
+    d = (
+        ((pool["lat"] - row["lat"]) * 69) ** 2
+        + ((pool["long"] - row["long"]) * 51) ** 2
+        + ((pool["sqft_living"] - row["sqft_living"]) / 800) ** 2
+        + ((pool["grade"] - row["grade"]) / 1.5) ** 2
+        + ((pool["Bedrooms"] - row["Bedrooms"]) / 2) ** 2
+    )
+    return pool.loc[d.nsmallest(k).index]
 
 
 def make_chat_message(role, text):
@@ -377,101 +497,104 @@ def make_chat_message(role, text):
     )
 
 
-def generate_ai_insights(selected_id, neighborhood, bedrooms, property_type):
-    """Generate real-time AI insights for the selected property"""
-    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
-    
-    if selected_id is not None and selected_id in data["Id"].values:
-        row = data[data["Id"] == selected_id].iloc[0]
-    else:
+def generate_ai_insights(selected_id):
+    if selected_id is None or selected_id not in data["Id"].values:
         return None
-    
+    row = data[data["Id"] == selected_id].iloc[0]
     insights = []
     gap_pct = row["GapPct"] * 100
-    neigh_avg = data[data["Neighborhood"] == row["Neighborhood"]]["ListedPrice"].mean()
-    
-    # Deal Alert
-    if gap_pct < -15:
-        insights.append(f"🚀 Great Deal! This home is {abs(gap_pct):.1f}% below market estimate.")
-    elif gap_pct > 15:
-        insights.append(f"⚠️ Overpriced Alert: {gap_pct:.1f}% above the AI estimate.")
-    
-    # Value Analysis
-    if row["GrLivArea"] > data["GrLivArea"].quantile(0.75):
-        insights.append(f"💪 Spacious: {row['GrLivArea']:.0f} sq ft (top 25% in dataset).")
-    
-    # Market Position
-    price_diff = row["ListedPrice"] - neigh_avg
-    if abs(price_diff) > data["ListedPrice"].std():
-        insights.append(f"📍 Neighborhood Position: {abs(price_diff/1000):.1f}K {'above' if price_diff > 0 else 'below'} neighborhood avg.")
-    
-    # Condition Assessment
-    if row["OverallQual"] >= 8:
-        insights.append(f"✨ Premium Quality: Rating {row['OverallQual']}/10")
-    elif row["OverallQual"] <= 4:
-        insights.append(f"🔧 Renovation Opportunity: Quality rating {row['OverallQual']}/10")
-    
-    return insights[:3]
+    if row["DealScore"] >= 75:
+        insights.append(f"🚀 Deal Score {row['DealScore']}/100 — one of the stronger opportunities in {row['City']}.")
+    elif row["DealScore"] <= 30:
+        insights.append(f"⚠️ Deal Score {row['DealScore']}/100 — weak value at the current list price.")
+    if gap_pct < -12:
+        insights.append(f"💰 Listed {abs(gap_pct):.0f}% below the AI estimate.")
+    elif gap_pct > 12:
+        insights.append(f"📈 Listed {gap_pct:.0f}% above the AI estimate — expect ~{int(row['EstDOM'])} days on market.")
+    if row["GrossYield"] >= 6:
+        insights.append(f"🏦 Est. gross rental yield {row['GrossYield']}% — strong for the area.")
+    if row["waterfront"] == 1:
+        insights.append("🌊 Waterfront property — scarce inventory, large model premium.")
+    return insights[:3] if insights else None
 
 
-def build_chat_reply(user_text, selected_id, neighborhood, bedrooms, property_type):
+def build_chat_reply(user_text, selected_id, city, bedrooms, tier):
     question = (user_text or "").strip().lower()
-    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
+    filtered = get_filtered_data(city, bedrooms, tier)
 
     if selected_id is not None and selected_id in data["Id"].values:
         row = data[data["Id"] == selected_id].iloc[0]
     else:
         row = filtered.iloc[0]
 
-    neigh_avg = data[data["Neighborhood"] == row["Neighborhood"]]["ListedPrice"].mean()
+    city_avg = data[data["City"] == row["City"]]["ListedPrice"].median()
     gap_pct = row["GapPct"] * 100
 
-    if any(word in question for word in ["why", "reason", "label", "labeled"]):
+    if any(w in question for w in ["score", "deal score"]):
+        return (
+            f"{row['Address']} scores {row['DealScore']}/100. The score blends the price gap vs the AI estimate, "
+            f"construction grade and condition, and view/waterfront appeal."
+        )
+    if any(w in question for w in ["rent", "yield", "roi", "invest", "cash flow"]):
+        return (
+            f"Estimated rent for {row['Address']} is about {money(row['RentEst'])}/month, a gross yield of "
+            f"{row['GrossYield']}% on the {money(row['ListedPrice'])} list price. "
+            f"With 20% down at 6.5%, the mortgage runs about {money(row['Mortgage'])}/month."
+        )
+    if any(w in question for w in ["mortgage", "payment", "monthly", "afford"]):
+        return (
+            f"With 20% down and a 30-year loan at 6.5%, {row['Address']} costs about {money(row['Mortgage'])}/month "
+            f"before taxes and insurance."
+        )
+    if any(w in question for w in ["days", "how long", "market time", "sell"]):
+        return (
+            f"The model estimates ~{int(row['EstDOM'])} days on market for {row['Address']}. "
+            f"Homes priced above the AI estimate tend to sit longer."
+        )
+    if any(w in question for w in ["comp", "similar", "nearby"]):
+        comps = find_comps(row, 3)
+        parts = [f"{c['Address']} ({money(c['ListedPrice'])}, {int(c['sqft_living']):,} sq ft)" for _, c in comps.iterrows()]
+        return "Closest comparable sales: " + "; ".join(parts) + "."
+    if any(w in question for w in ["why", "reason", "label", "labeled"]):
         return " ".join(build_explanation(row)[:2])
-
-    if any(word in question for word in ["price", "estimate", "listed", "gap", "deal", "bargain", "value"]):
+    if any(w in question for w in ["price", "estimate", "listed", "gap", "deal", "bargain", "value"]):
         response = (
             f"{row['Address']} is listed at {money(row['ListedPrice'])}. "
-            f"The AI estimate is {money(row['PredictedPrice'])}, so the price gap is {gap_pct:.1f}%. "
-            f"Right now it is labeled {row['PricingLabel'].lower()}."
+            f"The AI estimate is {money(row['PredictedPrice'])}, a gap of {gap_pct:.1f}%. "
+            f"It is labeled {row['PricingLabel'].lower()} with a Deal Score of {row['DealScore']}/100."
         )
-        if abs(gap_pct) > 10:
-            response += f" This is a significant {'premium' if gap_pct > 0 else 'opportunity'}."
         return response
-
-    if any(word in question for word in ["average", "market", "neighborhood", "compare"]):
+    if any(w in question for w in ["average", "market", "neighborhood", "city", "compare"]):
         return (
-            f"For {row['Neighborhood']}, the neighborhood average is {money(neigh_avg)}. "
-            f"This home has {row['GrLivArea']:.0f} sq ft, quality {row['OverallQual']}, and age {row['Age']:.0f} years. "
-            f"That helps explain how it compares to nearby homes."
+            f"The median list price in {row['City']} is {money(city_avg)}. This home offers "
+            f"{int(row['sqft_living']):,} sq ft at {money(row['PricePerSqft'])}/sq ft, grade {int(row['grade'])}/13."
         )
-
-    if any(word in question for word in ["filter", "filtered", "results", "homes"]):
+    if any(w in question for w in ["filter", "filtered", "results", "homes"]):
         return (
-            f"Your current filters show {len(filtered)} homes. "
-            f"Neighborhood: {neighborhood if neighborhood != 'ALL' else 'All'}, "
-            f"Bedrooms: {bedrooms if bedrooms != -1 else 'Any'}, "
-            f"Property type: {display_property_type(property_type)}."
+            f"Your current filters show {len(filtered):,} homes. City: {city if city != 'ALL' else 'All'}, "
+            f"Bedrooms: {bedrooms if bedrooms != -1 else 'Any'}, Tier: {GRADE_TIERS.get(tier, tier)}."
         )
-
-    if any(word in question for word in ["recommend", "suggest", "best", "advice"]):
-        best_deals = filtered.nsmallest(3, "GapPct")[["Address", "ListedPrice", "GapPct"]]
-        if len(best_deals) > 0:
-            top_deal = best_deals.iloc[0]
-            return f"💡 Based on value: {top_deal['Address']} at {money(top_deal['ListedPrice'])} (gap: {top_deal['GapPct']*100:.1f}%)"
+    if any(w in question for w in ["recommend", "suggest", "best", "advice"]):
+        best = filtered.nlargest(3, "DealScore")
+        if len(best) > 0:
+            top = best.iloc[0]
+            return (
+                f"💡 Top pick: {top['Address']} in {top['City']} at {money(top['ListedPrice'])} — "
+                f"Deal Score {top['DealScore']}/100, listed {top['GapPct']*100:.0f}% vs the AI estimate."
+            )
         return "Not enough data for recommendations yet."
-
     return (
-        f"You can ask me about price, deals, market comparisons, or recommendations. "
-        f"Right now I am focused on {row['Address']}, which is marked {row['PricingLabel'].lower()}."
+        f"Ask me about price, deal score, rent & yield, mortgage payments, days on market, comps, or recommendations. "
+        f"Right now I'm focused on {row['Address']} in {row['City']}."
     )
 
 
 # -----------------------------
 # App setup
 # -----------------------------
-app = dash.Dash(__name__)
-app.title = "Real Estate Analytics"
+app = dash.Dash(__name__, suppress_callback_exceptions=True)
+app.title = "Seattle Housing Intelligence"
+server = app.server  # exposed for deployment (Vercel/gunicorn)
 app.index_string = """
 <!DOCTYPE html>
 <html>
@@ -505,18 +628,10 @@ app.index_string = """
                 0% { background-position: -200% 0; }
                 100% { background-position: 200% 0; }
             }
-            .page-shell {
-                animation: fadeSlideUp 0.8s ease;
-            }
-            .hero-title {
-                animation: fadeSlideUp 0.9s ease;
-            }
-            .floating-badge {
-                animation: floatPulse 3.8s ease-in-out infinite;
-            }
-            .hover-card, .listing-hover, .chip-hover, .chat-card, .glass-panel {
-                animation: fadeSlideUp 0.7s ease;
-            }
+            .page-shell { animation: fadeSlideUp 0.8s ease; }
+            .hero-title { animation: fadeSlideUp 0.9s ease; }
+            .floating-badge { animation: floatPulse 3.8s ease-in-out infinite; }
+            .hover-card, .listing-hover, .chip-hover, .chat-card, .glass-panel { animation: fadeSlideUp 0.7s ease; }
             .hover-card:hover {
                 transform: translateY(-8px) scale(1.01);
                 box-shadow: 0 22px 48px rgba(59,130,246,0.16) !important;
@@ -529,23 +644,15 @@ app.index_string = """
                 transform: translateY(-3px);
                 box-shadow: 0 16px 32px rgba(59,130,246,0.18) !important;
             }
-            .glass-panel:hover, .chat-card:hover {
-                box-shadow: 0 22px 52px rgba(15, 23, 42, 0.10) !important;
-            }
+            .glass-panel:hover, .chat-card:hover { box-shadow: 0 22px 52px rgba(15, 23, 42, 0.10) !important; }
             .sparkle-dot {
                 background: linear-gradient(90deg, rgba(255,255,255,0.4), rgba(255,255,255,0.95), rgba(255,255,255,0.4));
                 background-size: 200% 100%;
                 animation: shimmer 2.8s linear infinite;
             }
-            .dash-graph {
-                transition: transform 0.25s ease, box-shadow 0.25s ease;
-            }
-            .dash-graph:hover {
-                transform: translateY(-4px);
-            }
-            * {
-                scroll-behavior: smooth;
-            }
+            .dash-graph { transition: transform 0.25s ease, box-shadow 0.25s ease; }
+            .dash-graph:hover { transform: translateY(-4px); }
+            * { scroll-behavior: smooth; }
         </style>
     </head>
     <body>
@@ -561,15 +668,14 @@ app.index_string = """
 
 app.layout = html.Div(
     [
-        
-        dcc.Store(id="property-type-store", data="ALL"),
+        dcc.Store(id="tier-store", data="ALL"),
         dcc.Store(id="selected-property-store"),
         dcc.Store(
             id="chat-history-store",
             data=[
                 {
                     "role": "assistant",
-                    "text": "Hi, I am the pricing assistant. Ask about the selected home, price gap, market average, or current filters."
+                    "text": "Hi, I'm the housing intelligence assistant. Ask about deal scores, rent & yield, mortgage payments, days on market, or comps."
                 }
             ]
         ),
@@ -580,43 +686,42 @@ app.layout = html.Div(
                     [
                         html.Div("Filters", style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "16px"}),
 
-                        html.Div("Neighborhood", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "6px", "color": "#475569"}),
+                        html.Div("City / Area", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "6px", "color": "#475569"}),
                         dcc.Dropdown(
-                            id="neighborhood-filter",
-                            options=[{"label": "All Neighborhoods", "value": "ALL"}] +
-                                    [{"label": n, "value": n} for n in sorted(data["Neighborhood"].dropna().unique())],
+                            id="city-filter",
+                            options=[{"label": "All of King County", "value": "ALL"}] +
+                                    [{"label": c, "value": c} for c in CITIES if c != "ALL"],
                             value="ALL",
                             clearable=False,
                             style={"marginBottom": "16px"}
                         ),
 
                         html.Div("Bedrooms", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "6px", "color": "#475569"}),
-
                         dcc.Dropdown(
                             id="bedroom-filter",
                             options=[{"label": "Any", "value": -1}] +
-                                    [{"label": f"{b} Bedrooms", "value": int(b)} for b in sorted(data["Bedrooms"].dropna().unique())],
+                                    [{"label": f"{b} Bedrooms", "value": int(b)} for b in sorted(data["Bedrooms"].unique()) if b > 0],
                             value=-1,
                             clearable=False,
                             style={"marginBottom": "16px"}
                         ),
 
-                        html.Div("Property Type", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "4px", "color": "#475569"}),
+                        html.Div("Home Tier", style={"fontSize": "13px", "fontWeight": "800", "marginBottom": "4px", "color": "#475569"}),
                         html.Div(
-                            "Choose the kind of home you want to view.",
+                            "Based on King County construction grade.",
                             style={"fontSize": "11px", "color": "#64748b", "marginBottom": "8px"}
                         ),
                         html.Div(
-                            id="property-type-buttons",
+                            id="tier-buttons",
                             style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(80px, 1fr))", "gap": "6px", "marginBottom": "8px"}
                         ),
 
                         html.Div(
                             [
-                                html.Div("Project demo", style={"fontSize": "12px", "color": "#94a3b8", "fontWeight": "800", "textTransform": "uppercase", "letterSpacing": "0.08em"}),
-                                html.Div("AI-assisted pricing support", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginTop": "6px"}),
+                                html.Div("Live model", style={"fontSize": "12px", "color": "#94a3b8", "fontWeight": "800", "textTransform": "uppercase", "letterSpacing": "0.08em"}),
+                                html.Div("Seattle Housing Intelligence", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginTop": "6px"}),
                                 html.Div(
-                                    "Click a property on the map, scatter plot, or listing card to see detailed pricing insights.",
+                                    f"{len(data):,} real King County sales. {MODEL_NOTE}. Click any home on the map, scatter plot, or cards for deal analysis, comps, and a renovation simulator.",
                                     style={"fontSize": "13px", "color": "#64748b", "lineHeight": "1.4", "marginTop": "6px"}
                                 ),
                             ],
@@ -631,10 +736,10 @@ app.layout = html.Div(
                         html.Div(
                             [
                                 html.Div("Pricing Assistant", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a"}),
-                                html.Div("Quick Q&A for the selected property", style={"fontSize": "12px", "color": "#64748b", "marginTop": "4px"}),
+                                html.Div("Deal scores, yields, mortgages, comps", style={"fontSize": "12px", "color": "#64748b", "marginTop": "4px"}),
                                 html.Div(
                                     id="chat-messages",
-                                    children=[make_chat_message("assistant", "Hi, I am the pricing assistant. Ask about the selected home, price gap, market average, or current filters.")],
+                                    children=[make_chat_message("assistant", "Hi, I'm the housing intelligence assistant. Ask about deal scores, rent & yield, mortgage payments, days on market, or comps.")],
                                     style={
                                         "marginTop": "10px",
                                         "height": "180px",
@@ -648,7 +753,7 @@ app.layout = html.Div(
                                 dcc.Input(
                                     id="chat-input",
                                     type="text",
-                                    placeholder="Ask about this home...",
+                                    placeholder="Is this a good rental investment?",
                                     style={
                                         "width": "100%",
                                         "marginTop": "10px",
@@ -656,7 +761,8 @@ app.layout = html.Div(
                                         "borderRadius": "14px",
                                         "border": "1px solid rgba(203,213,225,0.95)",
                                         "outline": "none",
-                                        "fontSize": "12px"
+                                        "fontSize": "12px",
+                                        "boxSizing": "border-box"
                                     }
                                 ),
                                 html.Button(
@@ -694,10 +800,6 @@ app.layout = html.Div(
                         "background": "linear-gradient(180deg, rgba(255,255,255,0.72) 0%, rgba(248,250,252,0.78) 100%)",
                         "padding": "12px 10px",
                         "borderRight": "1px solid rgba(226,232,240,0.85)",
-                        "minHeight": "auto",
-                        "maxHeight": "auto",
-                        "overflowY": "visible",
-                        "overflowX": "hidden",
                         "position": "sticky",
                         "top": "0",
                         "boxSizing": "border-box",
@@ -714,12 +816,12 @@ app.layout = html.Div(
                                     [
                                         html.Div(
                                             [
-                                                html.Span("Real Estate Analytics", className="hero-title", style={"fontSize": "38px", "fontWeight": "900", "color": "#0f172a"}),
+                                                html.Span("Seattle Housing Intelligence", className="hero-title", style={"fontSize": "38px", "fontWeight": "900", "color": "#0f172a"}),
                                                 html.Span(" ✦", style={"fontSize": "24px", "color": "#7c9cff", "fontWeight": "900"})
                                             ]
                                         ),
                                         html.Div(
-                                            "AI-assisted pricing dashboard for listing comparison and decision support",
+                                            "AI deal scoring, investor analytics, and a renovation simulator over 21,000+ real King County sales",
                                             style={"fontSize": "16px", "color": "#64748b", "marginTop": "8px"}
                                         )
                                     ]
@@ -727,7 +829,7 @@ app.layout = html.Div(
                                 html.Div(
                                     [
                                         html.Div(
-                                            [html.Span(className="sparkle-dot", style={"display": "inline-block", "width": "8px", "height": "8px", "borderRadius": "999px", "marginRight": "8px", "verticalAlign": "middle"}), "Connected • Demo mode"],
+                                            [html.Span(className="sparkle-dot", style={"display": "inline-block", "width": "8px", "height": "8px", "borderRadius": "999px", "marginRight": "8px", "verticalAlign": "middle"}), MODEL_NOTE],
                                             className="floating-badge",
                                             style={
                                                 "background": "linear-gradient(135deg, #eff6ff, #dbeafe)",
@@ -751,31 +853,11 @@ app.layout = html.Div(
                             [
                                 html.Div(
                                     [
-                                        html.Div(
-                                            [
-                                                html.Div("Map Zoom", style={"fontWeight": "800", "marginBottom": "6px", "color": "#334155"}),
-                                                dcc.Slider(
-                                                    id="map-zoom-slider",
-                                                    min=8,
-                                                    max=16,
-                                                    step=0.5,
-                                                    value=11,
-                                                    marks={i: str(i) for i in range(8, 17, 2)},
-                                                    tooltip={"placement": "bottom", "always_visible": False}
-                                                ),
-                                            ],
-                                            style={
-                                                "marginBottom": "12px",
-                                                "padding": "12px",
-                                                "background": "rgba(248,250,252,0.9)",
-                                                "borderRadius": "14px"
-                                            }
-                                        ),
                                         dcc.Graph(
                                             id="map-graph",
                                             config={"displayModeBar": False, "scrollZoom": True},
                                             className="animated-graph",
-                                            style={"height": "530px"}
+                                            style={"height": "590px"}
                                         )
                                     ],
                                     className="glass-panel",
@@ -819,14 +901,14 @@ app.layout = html.Div(
 )
 
 # -----------------------------
-# Property type chip callbacks
+# Tier chip callbacks
 # -----------------------------
 @app.callback(
-    Output("property-type-store", "data"),
-    Input({"type": "property-chip", "index": ALL}, "n_clicks"),
+    Output("tier-store", "data"),
+    Input({"type": "tier-chip", "index": ALL}, "n_clicks"),
     prevent_initial_call=True
 )
-def update_property_type(_):
+def update_tier(_):
     ctx = dash.callback_context
     if not ctx.triggered:
         return "ALL"
@@ -835,11 +917,11 @@ def update_property_type(_):
 
 
 @app.callback(
-    Output("property-type-buttons", "children"),
-    Input("property-type-store", "data")
+    Output("tier-buttons", "children"),
+    Input("tier-store", "data")
 )
-def render_property_buttons(selected_property):
-    return [property_button(value, selected_property) for value in PROPERTY_TYPES]
+def render_tier_buttons(selected_tier):
+    return [tier_button(value, selected_tier) for value in GRADE_TIERS]
 
 
 # -----------------------------
@@ -852,7 +934,9 @@ def render_property_buttons(selected_property):
 )
 def select_property_from_card(_):
     ctx = dash.callback_context
-    if not ctx.triggered:
+    if not ctx.triggered or not any(v for v in ctx.triggered[0].values() if v):
+        return dash.no_update
+    if ctx.triggered[0]["value"] in (None, 0):
         return dash.no_update
     triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
     return ast.literal_eval(triggered_id)["index"]
@@ -868,7 +952,6 @@ def select_property(map_click, scatter_click):
     ctx = dash.callback_context
     if not ctx.triggered:
         return dash.no_update
-
     trigger = ctx.triggered[0]["prop_id"].split(".")[0]
     if trigger == "map-graph" and map_click:
         return map_click["points"][0]["customdata"][0]
@@ -889,19 +972,19 @@ def select_property(map_click, scatter_click):
     State("chat-input", "value"),
     State("chat-history-store", "data"),
     State("selected-property-store", "data"),
-    State("neighborhood-filter", "value"),
+    State("city-filter", "value"),
     State("bedroom-filter", "value"),
-    State("property-type-store", "data"),
+    State("tier-store", "data"),
     prevent_initial_call=True
 )
-def update_chatbot(_, __, user_text, history, selected_id, neighborhood, bedrooms, property_type):
+def update_chatbot(_, __, user_text, history, selected_id, city, bedrooms, tier):
     history = history or []
     if not user_text or not user_text.strip():
         rendered = [make_chat_message(msg["role"], msg["text"]) for msg in history]
         return history, rendered, ""
 
     user_text = user_text.strip()
-    reply = build_chat_reply(user_text, selected_id, neighborhood, bedrooms, property_type)
+    reply = build_chat_reply(user_text, selected_id, city, bedrooms, tier)
     history = history + [
         {"role": "user", "text": user_text},
         {"role": "assistant", "text": reply}
@@ -913,55 +996,52 @@ def update_chatbot(_, __, user_text, history, selected_id, neighborhood, bedroom
 # -----------------------------
 # Main dashboard callback
 # -----------------------------
+MAX_MAP_POINTS = 2000
+MAX_CARDS = 25
+
+
 @app.callback(
     Output("stats-row", "children"),
     Output("map-graph", "figure"),
-    Output("listing-cards", "children"),
-    Output("scatter-graph", "figure"),
-    Output("feature-impact-graph", "figure"),
-    Output("trend-graph", "figure"),
-    Input("neighborhood-filter", "value"),
+    Input("city-filter", "value"),
     Input("bedroom-filter", "value"),
-    Input("property-type-store", "data"),
-    Input("selected-property-store", "data"),
-    Input("map-zoom-slider", "value"),
+    Input("tier-store", "data"),
 )
-def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_value):
-    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
+def update_overview(city, bedrooms, tier):
+    filtered = get_filtered_data(city, bedrooms, tier)
 
-
-    overpriced_count = int((filtered["PricingLabel"] == "Overpriced").sum())
-    fair_count = int((filtered["PricingLabel"] == "Fairly priced").sum())
+    undervalued_count = int((filtered["PricingLabel"] == "Undervalued").sum())
+    hot_deals = int((filtered["DealScore"] >= 75).sum())
 
     stats = [
-        make_stat_card("Listings", f"{len(filtered):,}", "Current filtered view", "#8bb5ff"),
-        make_stat_card("Avg Listed Price", money(filtered["ListedPrice"].mean()), "Observed listing price", "#9c9df4"),
-        make_stat_card("AI Price Estimate", money(filtered["PredictedPrice"].mean()), "Model estimate", "#7adab3"),
-        make_stat_card("Flagged Overpriced", f"{overpriced_count}", f"{fair_count} fairly priced homes", "#f5b06f"),
+        make_stat_card("Listings", f"{len(filtered):,}", "Real King County sales", "#8bb5ff"),
+        make_stat_card("Median Price", money(filtered["ListedPrice"].median()), f"{money(filtered['PricePerSqft'].median())}/sq ft", "#9c9df4"),
+        make_stat_card("AI Median Estimate", money(filtered["PredictedPrice"].median()), MODEL_NOTE, "#7adab3"),
+        make_stat_card("Hot Deals", f"{hot_deals:,}", f"Deal Score 75+ • {undervalued_count:,} undervalued", "#f5b06f"),
     ]
 
-    center_lat = filtered["Latitude"].mean()
-    center_lon = filtered["Longitude"].mean()
-    zoom_value = 11 if zoom_value is None else zoom_value
+    map_df = filtered
+    if len(map_df) > MAX_MAP_POINTS:
+        map_df = map_df.sample(MAX_MAP_POINTS, random_state=7)
 
     map_fig = px.scatter_mapbox(
-        filtered,
-        lat="Latitude",
-        lon="Longitude",
+        map_df,
+        lat="lat",
+        lon="long",
         color="PricingLabel",
-        size="ListedPrice",
         hover_name="Address",
         hover_data={
-            "Neighborhood": True,
+            "City": True,
             "Bedrooms": True,
+            "DealScore": True,
             "ListedPrice": ":,.0f",
             "PredictedPrice": ":,.0f",
-            "Latitude": False,
-            "Longitude": False,
+            "lat": False,
+            "long": False,
         },
         custom_data=["Id"],
-        zoom=zoom_value,
-        height=505,
+        zoom=8.6,
+        height=565,
         color_discrete_map={
             "Fairly priced": "#22c55e",
             "Overpriced": "#f97316",
@@ -970,7 +1050,7 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
     )
     map_fig.update_layout(
         mapbox_style="carto-positron",
-        mapbox_center={"lat": center_lat, "lon": center_lon},
+        mapbox_center={"lat": 47.45, "lon": -122.15},
         margin=dict(l=0, r=0, t=8, b=0),
         paper_bgcolor="white",
         plot_bgcolor="white",
@@ -979,146 +1059,183 @@ def update_dashboard(neighborhood, bedrooms, property_type, selected_id, zoom_va
         legend=dict(orientation="h", yanchor="bottom", y=0.98, xanchor="left", x=0.02, bgcolor="rgba(255,255,255,0.7)"),
         clickmode="event+select"
     )
-    map_fig.update_traces(marker={"opacity": 0.88}, selector=dict(mode="markers"))
-    map_fig.update_layout(transition={"duration": 500, "easing": "cubic-in-out"})
+    map_fig.update_traces(marker={"opacity": 0.82, "size": 9}, selector=dict(mode="markers"))
 
-    sorted_filtered = filtered.sort_values("GapPct", ascending=False).copy()
-    if selected_id is not None and selected_id in sorted_filtered["Id"].values:
-        selected_row_df = sorted_filtered[sorted_filtered["Id"] == selected_id]
-        other_rows = sorted_filtered[sorted_filtered["Id"] != selected_id]
-        sorted_filtered = pd.concat([selected_row_df, other_rows], axis=0)
-    cards = [make_listing_card(row, selected_id=selected_id) for _, row in sorted_filtered.iterrows()]
+    return stats, map_fig
+
+
+@app.callback(
+    Output("listing-cards", "children"),
+    Output("scatter-graph", "figure"),
+    Output("feature-impact-graph", "figure"),
+    Output("trend-graph", "figure"),
+    Input("city-filter", "value"),
+    Input("bedroom-filter", "value"),
+    Input("tier-store", "data"),
+    Input("selected-property-store", "data"),
+)
+def update_selection_views(city, bedrooms, tier, selected_id):
+    filtered = get_filtered_data(city, bedrooms, tier)
+
+    top_cards = filtered.nlargest(MAX_CARDS, "DealScore")
+    if selected_id is not None and selected_id in filtered["Id"].values and selected_id not in top_cards["Id"].values:
+        top_cards = pd.concat([filtered[filtered["Id"] == selected_id], top_cards])
+    if selected_id is not None and selected_id in top_cards["Id"].values:
+        sel_df = top_cards[top_cards["Id"] == selected_id]
+        top_cards = pd.concat([sel_df, top_cards[top_cards["Id"] != selected_id]])
+    cards = [
+        html.Div(
+            f"Top {min(MAX_CARDS, len(filtered))} homes by Deal Score ({len(filtered):,} match your filters)",
+            style={"fontSize": "13px", "fontWeight": "800", "color": "#64748b", "margin": "4px 4px 12px"}
+        )
+    ] + [make_listing_card(row, selected_id=selected_id) for _, row in top_cards.iterrows()]
 
     if selected_id is not None and selected_id in data["Id"].values:
         selected_row = data[data["Id"] == selected_id].iloc[0]
     else:
         selected_row = filtered.iloc[0]
 
+    scatter_df = filtered if len(filtered) <= 1500 else filtered.sample(1500, random_state=7)
     scatter_fig = px.scatter(
-        filtered,
-        x="GrLivArea",
+        scatter_df,
+        x="sqft_living",
         y="ListedPrice",
         color="PricingLabel",
-        size="OverallQual",
         hover_name="Address",
         custom_data=["Id"],
-        title=f"Selected Property vs Market: {selected_row['Address']}",
-        labels={"GrLivArea": "Living Area (sq ft)", "ListedPrice": "Listed Price"},
+        title=f"Market Position: {selected_row['Address']}",
+        labels={"sqft_living": "Living Area (sq ft)", "ListedPrice": "Listed Price"},
         color_discrete_map={
             "Fairly priced": "#22c55e",
             "Overpriced": "#f97316",
             "Undervalued": "#f59e0b",
-        }
+        },
+        opacity=0.45
     )
     scatter_fig.add_scatter(
-        x=[selected_row["GrLivArea"]],
+        x=[selected_row["sqft_living"]],
         y=[selected_row["ListedPrice"]],
         mode="markers+text",
         text=["Selected"],
         textposition="top center",
-        marker=dict(size=24, color="#111827", symbol="star"),
+        marker=dict(size=22, color="#111827", symbol="star"),
         name="Selected Property"
     )
     scatter_fig.update_layout(
         paper_bgcolor="white",
         plot_bgcolor="white",
         margin=dict(l=10, r=10, t=50, b=10),
-        title_font_size=20,
+        title_font_size=18,
         legend_title_text="",
         clickmode="event+select"
     )
-    scatter_fig.update_traces(marker={"opacity": 0.75}, selector=dict(mode="markers"))
-    scatter_fig.update_layout(transition={"duration": 450, "easing": "cubic-in-out"})
 
     compare_df = pd.DataFrame({
-        "Feature": ["Living Area", "Overall Quality", "Age", "Garage Cars", "Bathrooms"],
+        "Feature": ["Living Area (00s sqft)", "Grade (of 13)", "Condition (of 5)", "Bathrooms", "Age (decades)"],
         "Selected Property": [
-            selected_row["GrLivArea"],
-            selected_row["OverallQual"],
-            selected_row["Age"],
-            selected_row["GarageCars"] if pd.notna(selected_row["GarageCars"]) else 0,
-            selected_row["FullBath"] if pd.notna(selected_row["FullBath"]) else 0,
+            selected_row["sqft_living"] / 100,
+            selected_row["grade"],
+            selected_row["condition"],
+            selected_row["bathrooms"],
+            selected_row["Age"] / 10,
         ],
-        "Dataset Average": [
-            data["GrLivArea"].mean(),
-            data["OverallQual"].mean(),
-            data["Age"].mean(),
-            data["GarageCars"].fillna(0).mean(),
-            data["FullBath"].fillna(0).mean(),
+        "County Average": [
+            data["sqft_living"].mean() / 100,
+            data["grade"].mean(),
+            data["condition"].mean(),
+            data["bathrooms"].mean(),
+            data["Age"].mean() / 10,
         ]
     })
-    compare_long = compare_df.melt(id_vars="Feature", value_vars=["Selected Property", "Dataset Average"], var_name="Type", value_name="Value")
+    compare_long = compare_df.melt(id_vars="Feature", value_vars=["Selected Property", "County Average"], var_name="Type", value_name="Value")
     feature_fig = px.bar(
         compare_long,
         x="Feature",
         y="Value",
         color="Type",
         barmode="group",
-        title=f"Property Feature Comparison: {selected_row['Address']}",
-        labels={"Value": "Value"}
+        title=f"Feature Comparison: {selected_row['Address']}",
     )
-    feature_fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), title_font_size=20, transition={"duration": 450, "easing": "cubic-in-out"})
+    feature_fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), title_font_size=18)
 
-    price_compare_df = pd.DataFrame({
-        "Metric": ["Listed Price", "AI Price Estimate", "Neighborhood Avg", "Dataset Avg"],
-        "Price": [
-            selected_row["ListedPrice"],
-            selected_row["PredictedPrice"],
-            data[data["Neighborhood"] == selected_row["Neighborhood"]]["ListedPrice"].mean(),
-            data["ListedPrice"].mean()
-        ]
-    })
-    trend_fig = px.bar(price_compare_df, x="Metric", y="Price", title=f"Selected Property Price Context: {selected_row['Address']}", text="Price")
-    trend_fig.update_traces(texttemplate="$%{y:,.0f}", textposition="outside")
-    trend_fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), title_font_size=20, showlegend=False, transition={"duration": 450, "easing": "cubic-in-out"})
+    sel_city = selected_row["City"]
+    city_trend = data[data["City"] == sel_city].groupby("SaleMonth")["ListedPrice"].median()
+    trend_fig = go.Figure()
+    trend_fig.add_trace(go.Scatter(
+        x=list(county_trend.index), y=list(county_trend.values),
+        mode="lines+markers", name="King County median",
+        line=dict(color="#94a3b8", width=2, dash="dot")
+    ))
+    trend_fig.add_trace(go.Scatter(
+        x=list(city_trend.index), y=list(city_trend.values),
+        mode="lines+markers", name=f"{sel_city} median",
+        line=dict(color="#3b82f6", width=3)
+    ))
+    trend_fig.update_layout(
+        title=f"Real Sale-Price Trend: {sel_city} vs County",
+        paper_bgcolor="white", plot_bgcolor="white",
+        margin=dict(l=10, r=10, t=50, b=10), title_font_size=18,
+        legend=dict(orientation="h", y=1.02, x=0),
+        yaxis_tickformat="$,.0f"
+    )
 
-    return stats, map_fig, cards, scatter_fig, feature_fig, trend_fig
+    return cards, scatter_fig, feature_fig, trend_fig
 
 
 # -----------------------------
-# Property insight panel
+# Property insight panel (deal analysis, investor metrics, comps, what-if)
 # -----------------------------
 @app.callback(
     Output("property-insight-panel", "children"),
     Input("selected-property-store", "data"),
-    Input("neighborhood-filter", "value"),
+    Input("city-filter", "value"),
     Input("bedroom-filter", "value"),
-    Input("property-type-store", "data"),
+    Input("tier-store", "data"),
 )
-def render_property_insights(selected_id, neighborhood, bedrooms, property_type):
-    filtered = get_filtered_data(neighborhood, bedrooms, property_type)
+def render_property_insights(selected_id, city, bedrooms, tier):
+    filtered = get_filtered_data(city, bedrooms, tier)
 
-    if selected_id is None:
-        top = filtered.iloc[0]
+    if selected_id is None or selected_id not in data["Id"].values:
+        top = filtered.nlargest(1, "DealScore").iloc[0]
         return html.Div(
             [
-                html.Div("Property Insights", style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a"}),
-                html.Div("Choose a home to see detailed pricing insight and comparison.", style={"color": "#64748b", "fontSize": "15px", "marginTop": "6px"}),
+                html.Div("Deal Analysis", style={"fontSize": "22px", "fontWeight": "900", "color": "#0f172a"}),
+                html.Div("Select a home to see its Deal Score, investor metrics, comparable sales, and the renovation simulator.", style={"color": "#64748b", "fontSize": "15px", "marginTop": "6px"}),
                 html.Div(
                     [
-                        make_mini_metric("Preview Home", top["Address"], f"{top['Neighborhood']} • {display_property_type(top['PropertyType'])}"),
+                        make_mini_metric("Best Deal Right Now", top["Address"], f"{top['City']} • Deal Score {top['DealScore']}/100"),
                         make_mini_metric("Listed Price", money(top["ListedPrice"])),
                         make_mini_metric("AI Price Estimate", money(top["PredictedPrice"])),
-                        make_mini_metric("Pricing Label", top["PricingLabel"]),
+                        make_mini_metric("Est. Gross Yield", f"{top['GrossYield']}%"),
                     ],
                     style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(150px, 1fr))", "gap": "14px", "marginTop": "18px"}
                 )
             ]
         )
 
-    row_df = data[data["Id"] == selected_id]
-    if row_df.empty:
-        return html.Div("Selected property not found.")
-
-    row = row_df.iloc[0]
-    neighborhood_df = data[data["Neighborhood"] == row["Neighborhood"]]
-    avg_price = data["ListedPrice"].mean()
-    avg_sqft = data["GrLivArea"].mean()
-    avg_quality = data["OverallQual"].mean()
-    avg_age = data["Age"].mean()
-    neigh_avg_price = neighborhood_df["ListedPrice"].mean()
+    row = data[data["Id"] == selected_id].iloc[0]
     gap_pct = row["GapPct"] * 100
     reasons = build_explanation(row)
+    comps = find_comps(row, 4)
+
+    comp_cards = [
+        html.Div(
+            [
+                html.Div(c["Address"], style={"fontWeight": "800", "fontSize": "14px", "color": "#0f172a"}),
+                html.Div(f"{c['City']} • {int(c['Bedrooms'])} bd • {int(c['sqft_living']):,} sqft • grade {int(c['grade'])}",
+                         style={"fontSize": "12px", "color": "#64748b", "marginTop": "3px"}),
+                html.Div(money(c["ListedPrice"]), style={"fontSize": "17px", "fontWeight": "900", "color": "#1e40af", "marginTop": "6px"}),
+                html.Div(f"{money(c['PricePerSqft'])}/sqft", style={"fontSize": "11px", "color": "#94a3b8"}),
+            ],
+            style={
+                "padding": "14px",
+                "borderRadius": "16px",
+                "background": "rgba(248,250,252,0.9)",
+                "border": "1px solid rgba(226,232,240,0.9)"
+            }
+        )
+        for _, c in comps.iterrows()
+    ]
 
     return html.Div(
         [
@@ -1127,20 +1244,29 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
                     html.Div(
                         [
                             html.Div(row["Address"], style={"margin": "0", "color": "#0f172a", "fontSize": "28px", "fontWeight": "900"}),
-                            html.Div(f"{row['Neighborhood']} • {int(row['Bedrooms'])} bed • {display_property_type(row['PropertyType'])}", style={"color": "#64748b", "marginTop": "4px", "fontSize": "15px"})
+                            html.Div(
+                                f"{row['City']} (ZIP {int(row['zipcode'])}) • {int(row['Bedrooms'])} bed • {row['bathrooms']} bath • {int(row['sqft_living']):,} sq ft • built {int(row['yr_built'])}",
+                                style={"color": "#64748b", "marginTop": "4px", "fontSize": "15px"}
+                            )
                         ]
                     ),
                     html.Div(
-                        row["PricingLabel"],
-                        style={
-                            "background": label_bg(row["PricingLabel"]),
-                            "color": label_color(row["PricingLabel"]),
-                            "padding": "9px 14px",
-                            "borderRadius": "999px",
-                            "fontWeight": "800",
-                            "height": "fit-content",
-                            "border": f"1px solid {label_color(row['PricingLabel'])}22"
-                        }
+                        [
+                            deal_badge(row["DealScore"], size="big"),
+                            html.Div(
+                                row["PricingLabel"],
+                                style={
+                                    "background": label_bg(row["PricingLabel"]),
+                                    "color": label_color(row["PricingLabel"]),
+                                    "padding": "9px 14px",
+                                    "borderRadius": "999px",
+                                    "fontWeight": "800",
+                                    "height": "fit-content",
+                                    "border": f"1px solid {label_color(row['PricingLabel'])}22"
+                                }
+                            )
+                        ],
+                        style={"display": "flex", "gap": "12px", "alignItems": "center"}
                     )
                 ],
                 style={"display": "flex", "justifyContent": "space-between", "alignItems": "flex-start", "marginBottom": "18px"}
@@ -1148,78 +1274,119 @@ def render_property_insights(selected_id, neighborhood, bedrooms, property_type)
 
             html.Div(
                 [
-                    make_mini_metric("Listed Price", money(row["ListedPrice"])),
-                    make_mini_metric("AI Price Estimate", money(row["PredictedPrice"])),
-                    make_mini_metric("Price Gap", f"{gap_pct:.1f}%", "Listed vs predicted"),
-                    make_mini_metric("Neighborhood Avg", money(neigh_avg_price), f"Dataset avg: {money(avg_price)}"),
+                    make_mini_metric("Listed Price", money(row["ListedPrice"]), f"{money(row['PricePerSqft'])}/sq ft"),
+                    make_mini_metric("AI Price Estimate", money(row["PredictedPrice"]), f"Gap: {gap_pct:+.1f}%"),
+                    make_mini_metric("Est. Days on Market", f"{int(row['EstDOM'])} days", "Model estimate"),
+                    make_mini_metric("Est. Rent / Yield", f"{money(row['RentEst'])}/mo", f"{row['GrossYield']}% gross yield"),
+                    make_mini_metric("Mortgage (20% down)", f"{money(row['Mortgage'])}/mo", "30-yr @ 6.5%"),
                 ],
-                style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(160px, 1fr))", "gap": "16px", "marginBottom": "24px"}
+                style={"display": "grid", "gridTemplateColumns": "repeat(5, minmax(150px, 1fr))", "gap": "14px", "marginBottom": "22px"}
             ),
 
             html.Div(
                 [
                     html.Div(
                         [
-                            html.Div("Why this home is labeled this way", style={"fontSize": "20px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "12px", "textAlign": "center"}),
+                            html.Div("Why the model prices it this way", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "10px"}),
                             html.Div(
                                 [
                                     html.Div(
                                         [
-                                            html.Div(f"0{i+1}", style={"fontSize": "14px", "fontWeight": "900", "color": "#1e40af", "marginBottom": "6px", "display": "inline-block", "marginRight": "10px"}),
-                                            html.Div(reason, style={"color": "#334155", "lineHeight": "1.6", "fontSize": "15px", "display": "inline"})
+                                            html.Span(f"0{i+1}", style={"fontSize": "13px", "fontWeight": "900", "color": "#1e40af", "marginRight": "10px"}),
+                                            html.Span(reason, style={"color": "#334155", "lineHeight": "1.6", "fontSize": "14px"})
                                         ],
-                                        style={
-                                            "marginBottom": "16px",
-                                            "textAlign": "left"
-                                        }
+                                        style={"marginBottom": "12px"}
                                     ) for i, reason in enumerate(reasons)
-                                ],
-                                style={"maxWidth": "860px", "margin": "0 auto"}
+                                ]
                             )
                         ],
-                        style={"marginBottom": "26px"}
+                        style={"flex": "1.1"}
                     ),
                     html.Div(
                         [
-                            html.Div("Property Breakdown", style={"fontSize": "18px", "fontWeight": "800", "color": "#0f172a", "marginBottom": "12px", "textAlign": "center"}),
-                            html.Div(
-                                [
-                                    make_mini_metric("Living Area", f"{row['GrLivArea']:.0f} sq ft", f"Dataset avg: {avg_sqft:.0f}"),
-                                    make_mini_metric("Overall Quality", f"{row['OverallQual']}", f"Dataset avg: {avg_quality:.1f}"),
-                                    make_mini_metric("Age", f"{row['Age']:.0f} years", f"Dataset avg: {avg_age:.1f}"),
-                                ],
-                                style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(150px, 1fr))", "gap": "14px", "maxWidth": "900px", "margin": "0 auto"}
-                            )
-                        ]
+                            html.Div("Renovation Simulator", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a"}),
+                            html.Div("What would upgrades do to the AI estimate?", style={"fontSize": "12px", "color": "#64748b", "marginBottom": "12px"}),
+                            html.Div("Upgrade construction grade by", style={"fontSize": "12px", "fontWeight": "800", "color": "#475569"}),
+                            dcc.Slider(id="whatif-grade", min=0, max=3, step=1, value=0,
+                                       marks={i: f"+{i}" for i in range(4)}),
+                            html.Div("Add living space (sq ft)", style={"fontSize": "12px", "fontWeight": "800", "color": "#475569", "marginTop": "10px"}),
+                            dcc.Slider(id="whatif-sqft", min=0, max=1000, step=250, value=0,
+                                       marks={i: f"+{i}" for i in range(0, 1001, 250)}),
+                            html.Div(id="whatif-output", style={"marginTop": "14px"})
+                        ],
+                        style={
+                            "flex": "1",
+                            "padding": "16px",
+                            "borderRadius": "18px",
+                            "background": "linear-gradient(135deg, rgba(239,246,255,0.9), rgba(248,250,252,0.95))",
+                            "border": "1px solid rgba(191,219,254,0.8)"
+                        }
                     )
                 ],
-                style={"display": "block"}
+                style={"display": "flex", "gap": "20px", "marginBottom": "22px"}
+            ),
+
+            html.Div(
+                [
+                    html.Div("Comparable Sales Nearby", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "12px"}),
+                    html.Div(comp_cards, style={"display": "grid", "gridTemplateColumns": f"repeat({max(len(comp_cards),1)}, 1fr)", "gap": "12px"})
+                ]
             )
         ]
     )
 
 
-# Real-time AI Insights Callback - Auto-generates insights when properties are selected
+# -----------------------------
+# What-if renovation simulator
+# -----------------------------
+@app.callback(
+    Output("whatif-output", "children"),
+    Input("whatif-grade", "value"),
+    Input("whatif-sqft", "value"),
+    State("selected-property-store", "data"),
+)
+def run_whatif(grade_up, sqft_add, selected_id):
+    if selected_id is None or selected_id not in data["Id"].values:
+        return html.Div("Select a home first.", style={"fontSize": "12px", "color": "#94a3b8"})
+
+    row = data[data["Id"] == selected_id].iloc[0]
+    modified = row.copy()
+    modified["grade"] = min(13, row["grade"] + (grade_up or 0))
+    modified["sqft_living"] = row["sqft_living"] + (sqft_add or 0)
+    new_price = predict_price(modified)
+    delta = new_price - row["PredictedPrice"]
+
+    return html.Div(
+        [
+            html.Div("New AI estimate", style={"fontSize": "11px", "color": "#64748b", "fontWeight": "800"}),
+            html.Div(money(new_price), style={"fontSize": "24px", "fontWeight": "900", "color": "#0f172a"}),
+            html.Div(
+                f"{'+' if delta >= 0 else ''}{money(delta)} vs current estimate",
+                style={"fontSize": "13px", "fontWeight": "800", "color": "#16a34a" if delta >= 0 else "#ef4444", "marginTop": "2px"}
+            ),
+        ]
+    )
+
+
+# -----------------------------
+# Real-time AI insights on selection
+# -----------------------------
 @app.callback(
     Output("chat-history-store", "data", allow_duplicate=True),
     Output("chat-messages", "children", allow_duplicate=True),
     Input("selected-property-store", "data"),
     State("chat-history-store", "data"),
-    State("neighborhood-filter", "value"),
-    State("bedroom-filter", "value"),
-    State("property-type-store", "data"),
     prevent_initial_call=True
 )
-def auto_generate_insights(selected_id, history, neighborhood, bedrooms, property_type):
-    """Automatically generate AI insights when property is selected"""
+def auto_generate_insights(selected_id, history):
     if selected_id is None or selected_id not in data["Id"].values:
         return dash.no_update, dash.no_update
-    
+
     history = history or []
-    insights = generate_ai_insights(selected_id, neighborhood, bedrooms, property_type)
+    insights = generate_ai_insights(selected_id)
     if not insights:
         return dash.no_update, dash.no_update
-    
+
     insight_text = " ".join(insights)
     history = history + [{"role": "assistant", "text": f"🤖 Real-time: {insight_text}"}]
     rendered = [make_chat_message(msg["role"], msg["text"]) for msg in history]

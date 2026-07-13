@@ -1,0 +1,7 @@
+.venv
+*.ipynb
+test.csv
+train.csv
+setup_environment.py
+SETUP_COMPLETE.txt
+__pycache__

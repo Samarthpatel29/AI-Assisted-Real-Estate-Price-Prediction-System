@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.vercel/
+.env*
+SETUP_COMPLETE.txt
+node.tar.gz
+.DS_Store

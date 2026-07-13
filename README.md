@@ -1,290 +1,81 @@
-# AI-Assisted Real Estate Price Prediction and Dashboard
+# Seattle Housing Intelligence
 
-## Project Goal
+**Live demo:** https://ai-real-estate-dashboard-puce.vercel.app
 
-This project builds a simple AI-assisted system for evaluating real estate listings. It compares a home's listed price with a machine learning predicted fair price, then highlights whether the listing appears overpriced, fairly priced, or undervalued.
-
-The project also includes interactive visualizations, property-level insights, and a pricing assistant that helps users understand market patterns and the factors influencing property value.
+An AI-powered housing analytics platform built on **21,000+ real home sales from King County / Seattle** (May 2014 – May 2015). It goes beyond simple price prediction: every listing gets a **Deal Score**, investor economics, an estimated time on market, comparable sales, and a live **renovation what-if simulator** — all served by a real regression model that trains at startup.
 
 ---
 
-## Table of Contents
-1. Introduction
-2. Project Structure
-3. House Price Prediction
-4. Time on Market Prediction
-5. Real Estate Dashboard
-6. AI-Powered Pricing Assistant
-7. Data Description
-8. How to Run
-9. How to Use
+## What makes this different from a typical price-prediction project
+
+| Feature | What it does |
+|---|---|
+| **Deal Score (0–100)** | Blends the price gap vs. the AI estimate, construction grade & condition, and view/waterfront appeal into a single ranked score. The dashboard surfaces the top deals for any filter. |
+| **Live hedonic model** | A ridge regression on log(price) with ZIP-code fixed effects, fit **in production at startup** with pure NumPy (R² ≈ 0.88). No pickled artifacts, no fallback demo data. |
+| **Renovation simulator** | Select a home, move sliders ("upgrade grade +2", "add 500 sq ft"), and the model re-prices the home instantly using its learned coefficients. |
+| **Investor analytics** | Estimated market rent, gross rental yield, and a 30-year mortgage payment (20% down @ 6.5%) for every property. |
+| **Estimated days on market** | Overpriced homes sit longer — a transparent model turns the price gap and quality into an expected DOM figure. |
+| **Comparable sales** | Nearest-neighbor comps in the same ZIP by location, size, grade, and bedrooms. |
+| **Real map & real trend** | Every point sits at its true latitude/longitude on a Seattle map, and the trend chart shows actual median sale prices by month, city vs. county. |
+| **Pricing assistant** | A chat assistant that answers questions about deal scores, rent & yield, mortgage payments, days on market, comps, and recommendations for the selected home. |
 
 ---
 
-## Introduction
+## Dataset
 
-Real estate pricing depends on many factors such as location, size, quality, and overall market conditions. This project combines machine learning and interactive analytics to:
+`kc_house_data.csv` — 21,597 house sales in King County, WA (includes Seattle, Bellevue, Redmond, Kirkland, Medina, …), May 2014 – May 2015.
 
-- Predict house prices using multiple regression models
-- Estimate how long a house may stay on the market
-- Provide an interactive dashboard for exploring listings and pricing insights
+Key fields: `price`, `sqft_living`, `sqft_lot`, `bedrooms`, `bathrooms`, `floors`, `waterfront`, `view` (0–4), `condition` (1–5), `grade` (1–13 construction quality), `yr_built`, `yr_renovated`, `zipcode`, `lat`, `long`.
 
-The main comparison is:
+Data cleaning handled in `app.py`: NaN `waterfront`/`view`/`yr_renovated` filled with 0, `?` strings in `sqft_basement` coerced, resales deduplicated to the most recent sale.
 
-```text
-Listed Price vs Predicted Price
-```
+> Street addresses shown in the app are synthetic (the public dataset does not include addresses); coordinates, prices, and features are real.
 
-Properties are labeled as:
+## The model
 
-- Overpriced
-- Fairly priced
-- Undervalued
+- **Target:** log(price)
+- **Features:** log living/lot area, beds, baths, floors, waterfront, view, condition, grade, age, renovated flag, lat/long, and one-hot ZIP-code fixed effects (~70 ZIPs)
+- **Estimator:** ridge regression solved in closed form with NumPy (`(XᵀX + λI)β = Xᵀy`), Duan smearing for unbiased back-transform to dollars
+- **Fit:** ~0.5 s at startup, R² ≈ 0.88 on log price
 
----
+Because the coefficient vector lives in memory, the renovation simulator can re-price any modified home instantly.
 
-## Project Structure
+## Project structure
 
-- `app.py`
-  Main Dash dashboard application
+- `app.py` — the whole application: data prep, model, analytics, and the Dash dashboard
+- `index.py` — Vercel serverless entrypoint (exposes the Flask/WSGI server)
+- `vercel.json`, `requirements.txt`, `.vercelignore` — deployment config
+- `kc_house_data.csv` — dataset
+- `house_price_prediction.ipynb`, `Time on market prediction.ipynb` — original Ames-dataset notebooks (kept for reference; `train.csv`/`test.csv` belong to them)
 
-- `setup_environment.py`
-  Creates the environment and installs project dependencies
+## Run locally
 
-- `house_price_prediction.ipynb`
-  Notebook for house price prediction using XGBoost, LightGBM, and CatBoost
-
-- `Time on market prediction.ipynb`
-  Notebook for time on market prediction
-
-- `train.csv`, `test.csv`
-  Dataset files used by the project
-
-- `submission.csv`
-  Predicted house prices used by the dashboard
-
-- `time_on_market_submission.csv`
-  Output file for time on market predictions
-
-- `data_description.txt`
-  Description of dataset columns and meanings
-
----
-
-## House Price Prediction
-
-### Overview
-
-This notebook builds regression models to estimate house prices from property features.
-
-### Models Used
-
-- XGBoost
-- LightGBM
-- CatBoost
-
-### Typical Workflow
-
-- Handle missing values
-- Encode categorical variables
-- Train models
-- Evaluate model performance
-- Save final predictions
-
-### Output
-
-```text
-submission.csv
-```
-
-This file is the main prediction input used by `app.py`.
-
----
-
-## Time on Market Prediction
-
-### Overview
-
-This notebook estimates how long a property may remain on the market.
-
-### Note
-
-The original dataset does not include a direct `TimeOnMarket` column, so the notebook creates a proxy target:
-
-```text
-TimeOnMarket = (YrSold - YearBuilt) * 12 + MoSold
-```
-
-### Output
-
-```text
-time_on_market_submission.csv
-```
-
-At the moment, the dashboard primarily uses `submission.csv`. The time on market output is part of the project workflow, but it is not the main file currently consumed by `app.py`.
-
----
-
-## Real Estate Dashboard
-
-### Overview
-
-`app.py` builds an interactive dashboard using Dash and Plotly.
-
-### Features
-
-- Interactive property map
-- Listing cards with pricing details
-- Filters for neighborhood, bedrooms, and property type
-- Property insight panel
-- Price comparison charts
-- Feature comparison charts
-- Real-time pricing labels
-
-### Dashboard Behavior
-
-- If `submission.csv` exists, the app uses your generated house price predictions
-- If `submission.csv` is missing, the app falls back to demo estimates so the dashboard can still load
-
-This means the dashboard can still run without crashing, but you should generate `submission.csv` first if you want to see your real model output.
-
----
-
-## AI-Powered Pricing Assistant
-
-### Overview
-
-The dashboard includes a simple rule-based pricing assistant.
-
-### Capabilities
-
-- Explain listed price vs predicted price
-- Compare a property to neighborhood averages
-- Highlight deal or overpriced signals
-- Explain why a property received its pricing label
-- Suggest value opportunities from the filtered results
-
----
-
-## Data Description
-
-Important features include:
-
-- `GrLivArea` -> Living area
-- `OverallQual` -> Overall quality
-- `YearBuilt` -> Construction year
-- `Neighborhood` -> Property location
-- `SalePrice` -> Actual sale price target
-
-For the full data dictionary, see:
-
-```text
-data_description.txt
-```
-
----
-
-## How to Run
-
-Run the project in this order.
-
-### 1. Open the project folder
-
-Open the full project folder in VS Code or another editor.
-
-### 2. Run setup
-
-This script creates the virtual environment, installs dependencies, registers the Jupyter kernel, and writes setup details to `SETUP_COMPLETE.txt`.
-
-```powershell
-python setup_environment.py
-```
-
-### 3. Run the house price prediction notebook
-
-Run:
-
-- `house_price_prediction.ipynb`
-
-This step generates:
-
-```text
-submission.csv
-```
-
-### 4. Run the time on market notebook
-
-Run:
-
-- `Time on market prediction.ipynb`
-
-This step generates:
-
-```text
-time_on_market_submission.csv
-```
-
-### 5. Run the dashboard
-
-```powershell
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 python app.py
 ```
 
-Then open:
+Then open http://127.0.0.1:8050.
 
-```text
-http://127.0.0.1:8050/
+## Deploy
+
+The app runs on Vercel's free tier as a Python serverless function:
+
+```bash
+vercel deploy --prod
 ```
 
-### Notes
+## How to use
 
-- `setup_environment.py` installs the project dependencies, including `dash`, `plotly`, `xgboost`, `lightgbm`, and `catboost`
-- If Python is not installed on a machine, setup will not work until Python is installed first
-- If `submission.csv` has not been generated yet, the dashboard will still open, but it will use fallback demo estimates instead of your trained model predictions
-
----
-
-## How to Use
-
-### Filters
-
-Use the left sidebar to filter by:
-
-- Neighborhood
-- Number of bedrooms
-- Property type
-
-### Selecting a Property
-
-You can select a property by clicking:
-
-- A point on the map
-- A point on the scatter plot
-- A listing card
-
-### Dashboard Views
-
-The dashboard includes:
-
-- A map of listings
-- Listing cards with pricing labels
-- A scatter plot comparing living area and listed price
-- Feature comparison charts
-- Price context charts
-- A property insight panel
-
-### Pricing Assistant
-
-Ask the assistant questions such as:
-
-- "Is this a good deal?"
-- "What is the price gap?"
-- "How does this compare to the neighborhood average?"
-- "Why is this property overpriced?"
-- "What are the best deals right now?"
-
-### Pricing Labels
-
-- `Overpriced`: listed price is meaningfully above the predicted price
-- `Fairly priced`: listed price is close to the predicted price
-- `Undervalued`: listed price is below the predicted price
+1. **Filter** by city, bedrooms, or home tier (Starter → Luxury, or Waterfront) in the sidebar.
+2. **Select a home** by clicking a map point, a scatter-plot point, or a listing card (cards are ranked by Deal Score).
+3. **Read the Deal Analysis panel**: Deal Score, price gap, days on market, rent & yield, mortgage, why the model priced it that way, and comparable sales.
+4. **Play with the Renovation Simulator** to see how upgrades change the AI estimate.
+5. **Ask the Pricing Assistant** things like:
+   - "Is this a good rental investment?"
+   - "What's the deal score?"
+   - "How long will it take to sell?"
+   - "Show me comps"
+   - "What are the best deals right now?"
