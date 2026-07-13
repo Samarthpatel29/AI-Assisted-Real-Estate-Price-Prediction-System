@@ -359,7 +359,7 @@ def make_listing_card(row, selected_id=None):
                             make_mini_metric("AI Estimate", money(row["PredictedPrice"])),
                             make_mini_metric("Est. Days on Mkt", f"{int(row['EstDOM'])} days"),
                         ],
-                        style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "10px", "marginTop": "14px"}
+                        style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(110px, 1fr))", "gap": "10px", "marginTop": "14px"}
                     )
                 ],
                 style={"flex": "1", "textAlign": "left"},
@@ -604,6 +604,12 @@ app.index_string = """
         {%favicon%}
         {%css%}
         <style>
+            html, body {
+                overflow-x: hidden;
+            }
+            .dash-graph svg, .js-plotly-plot svg {
+                overflow: hidden !important;
+            }
             body {
                 margin: 0;
                 background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 45%, #f0f9ff 100%);
@@ -844,7 +850,7 @@ app.layout = html.Div(
                                     ]
                                 )
                             ],
-                            style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "24px"}
+                            style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "24px", "flexWrap": "wrap", "gap": "12px"}
                         ),
 
                         html.Div(id="stats-row", style={"display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "18px"}),
@@ -855,26 +861,27 @@ app.layout = html.Div(
                                     [
                                         dcc.Graph(
                                             id="map-graph",
-                                            config={"displayModeBar": False, "scrollZoom": True},
+                                            config={"displayModeBar": False, "scrollZoom": True, "responsive": True},
                                             className="animated-graph",
                                             style={"height": "590px"}
                                         )
                                     ],
                                     className="glass-panel",
-                                    style={"flex": "1.45", **glass_card(radius="26px", padding="12px")}
+                                    style={"flex": "1.45", "minWidth": "360px", "minHeight": "0", **glass_card(radius="26px", padding="12px")}
                                 ),
                                 html.Div(
                                     id="listing-cards",
                                     className="glass-panel",
                                     style={
                                         "flex": "1",
+                                        "minWidth": "320px",
                                         "maxHeight": "620px",
                                         "overflowY": "auto",
                                         "paddingRight": "8px"
                                     }
                                 ),
                             ],
-                            style={"display": "flex", "gap": "18px", "alignItems": "stretch", "marginBottom": "18px"}
+                            style={"display": "flex", "gap": "18px", "alignItems": "stretch", "marginBottom": "18px", "flexWrap": "wrap"}
                         ),
 
                         html.Div(
@@ -885,14 +892,14 @@ app.layout = html.Div(
 
                         html.Div(
                             [
-                                html.Div(dcc.Graph(id="scatter-graph", config={"displayModeBar": False}, className="animated-graph"), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
-                                html.Div(dcc.Graph(id="feature-impact-graph", config={"displayModeBar": False}, className="animated-graph"), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
-                                html.Div(dcc.Graph(id="trend-graph", config={"displayModeBar": False}, className="animated-graph"), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
+                                html.Div(dcc.Graph(id="scatter-graph", config={"displayModeBar": False, "responsive": True}, className="animated-graph", style={"width": "100%", "minWidth": "0"}), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
+                                html.Div(dcc.Graph(id="feature-impact-graph", config={"displayModeBar": False, "responsive": True}, className="animated-graph", style={"width": "100%", "minWidth": "0"}), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
+                                html.Div(dcc.Graph(id="trend-graph", config={"displayModeBar": False, "responsive": True}, className="animated-graph", style={"width": "100%", "minWidth": "0"}), className="glass-panel", style=glass_card(radius="24px", padding="12px")),
                             ],
-                            style={"display": "grid", "gridTemplateColumns": "1fr 1fr 1fr", "gap": "16px"}
+                            style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(300px, 1fr))", "gap": "16px"}
                         ),
                     ],
-                    style={"flex": "1", "padding": "20px", "background": "transparent"}
+                    style={"flex": "1", "minWidth": "0", "padding": "20px", "background": "transparent", "boxSizing": "border-box"}
                 )
             ],
             className="page-shell", style={"display": "flex", "fontFamily": "Inter, Arial, sans-serif", "minHeight": "100vh"}
@@ -1208,7 +1215,7 @@ def render_property_insights(selected_id, city, bedrooms, tier):
                         make_mini_metric("AI Price Estimate", money(top["PredictedPrice"])),
                         make_mini_metric("Est. Gross Yield", f"{top['GrossYield']}%"),
                     ],
-                    style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(150px, 1fr))", "gap": "14px", "marginTop": "18px"}
+                    style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(160px, 1fr))", "gap": "14px", "marginTop": "18px"}
                 )
             ]
         )
@@ -1280,7 +1287,7 @@ def render_property_insights(selected_id, city, bedrooms, tier):
                     make_mini_metric("Est. Rent / Yield", f"{money(row['RentEst'])}/mo", f"{row['GrossYield']}% gross yield"),
                     make_mini_metric("Mortgage (20% down)", f"{money(row['Mortgage'])}/mo", "30-yr @ 6.5%"),
                 ],
-                style={"display": "grid", "gridTemplateColumns": "repeat(5, minmax(150px, 1fr))", "gap": "14px", "marginBottom": "22px"}
+                style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(160px, 1fr))", "gap": "14px", "marginBottom": "22px"}
             ),
 
             html.Div(
@@ -1300,7 +1307,7 @@ def render_property_insights(selected_id, city, bedrooms, tier):
                                 ]
                             )
                         ],
-                        style={"flex": "1.1"}
+                        style={"flex": "1.1", "minWidth": "280px"}
                     ),
                     html.Div(
                         [
@@ -1316,6 +1323,7 @@ def render_property_insights(selected_id, city, bedrooms, tier):
                         ],
                         style={
                             "flex": "1",
+                            "minWidth": "280px",
                             "padding": "16px",
                             "borderRadius": "18px",
                             "background": "linear-gradient(135deg, rgba(239,246,255,0.9), rgba(248,250,252,0.95))",
@@ -1323,13 +1331,13 @@ def render_property_insights(selected_id, city, bedrooms, tier):
                         }
                     )
                 ],
-                style={"display": "flex", "gap": "20px", "marginBottom": "22px"}
+                style={"display": "flex", "gap": "20px", "marginBottom": "22px", "flexWrap": "wrap"}
             ),
 
             html.Div(
                 [
                     html.Div("Comparable Sales Nearby", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginBottom": "12px"}),
-                    html.Div(comp_cards, style={"display": "grid", "gridTemplateColumns": f"repeat({max(len(comp_cards),1)}, 1fr)", "gap": "12px"})
+                    html.Div(comp_cards, style={"display": "grid", "gridTemplateColumns": "repeat(auto-fit, minmax(180px, 1fr))", "gap": "12px"})
                 ]
             )
         ]
