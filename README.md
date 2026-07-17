@@ -1,4 +1,4 @@
-# Seattle Housing Intelligence
+# AI-Assisted Real Estate Analytics
 
 **Live demo:** https://ai-real-estate-dashboard-puce.vercel.app
 

@@ -593,7 +593,7 @@ def build_chat_reply(user_text, selected_id, city, bedrooms, tier):
 # App setup
 # -----------------------------
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
-app.title = "Seattle Housing Intelligence"
+app.title = "AI Assisted Real Estate"
 server = app.server  # exposed for deployment (Vercel/gunicorn)
 app.index_string = """
 <!DOCTYPE html>
@@ -725,7 +725,7 @@ app.layout = html.Div(
                         html.Div(
                             [
                                 html.Div("Live model", style={"fontSize": "12px", "color": "#94a3b8", "fontWeight": "800", "textTransform": "uppercase", "letterSpacing": "0.08em"}),
-                                html.Div("Seattle Housing Intelligence", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginTop": "6px"}),
+                                html.Div("AI Assisted Real Estate", style={"fontSize": "18px", "fontWeight": "900", "color": "#0f172a", "marginTop": "6px"}),
                                 html.Div(
                                     f"{len(data):,} real King County sales. {MODEL_NOTE}. Click any home on the map, scatter plot, or cards for deal analysis, comps, and a renovation simulator.",
                                     style={"fontSize": "13px", "color": "#64748b", "lineHeight": "1.4", "marginTop": "6px"}
@@ -822,7 +822,7 @@ app.layout = html.Div(
                                     [
                                         html.Div(
                                             [
-                                                html.Span("Seattle Housing Intelligence", className="hero-title", style={"fontSize": "38px", "fontWeight": "900", "color": "#0f172a"}),
+                                                html.Span("AI Assisted Real Estate", className="hero-title", style={"fontSize": "38px", "fontWeight": "900", "color": "#0f172a"}),
                                                 html.Span(" ✦", style={"fontSize": "24px", "color": "#7c9cff", "fontWeight": "900"})
                                             ]
                                         ),
